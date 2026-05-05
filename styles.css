@@ -338,6 +338,93 @@ button:disabled {
   line-height: 1;
 }
 
+.character-select {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.character-option {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 112px;
+  padding: 10px;
+}
+
+.character-option.selected {
+  border-color: rgba(216, 183, 95, 0.72);
+  background: #2b332b;
+}
+
+.character-option b {
+  font-size: 13px;
+}
+
+.sprite-preview {
+  position: relative;
+  display: block;
+  width: 54px;
+  height: 70px;
+  image-rendering: pixelated;
+}
+
+.sprite-preview::before,
+.sprite-preview::after {
+  position: absolute;
+  content: "";
+  image-rendering: pixelated;
+}
+
+.sprite-preview.male::before {
+  left: 19px;
+  top: 5px;
+  width: 18px;
+  height: 18px;
+  background:
+    linear-gradient(#5b2f24 0 0) 0 0 / 18px 7px no-repeat,
+    linear-gradient(#d49a72 0 0) 3px 7px / 13px 11px no-repeat;
+}
+
+.sprite-preview.male::after {
+  left: 11px;
+  top: 24px;
+  width: 34px;
+  height: 40px;
+  background:
+    linear-gradient(#263331 0 0) 7px 0 / 20px 24px no-repeat,
+    linear-gradient(#2f2427 0 0) 1px 2px / 8px 26px no-repeat,
+    linear-gradient(#34363b 0 0) 9px 23px / 8px 15px no-repeat,
+    linear-gradient(#1f2228 0 0) 20px 23px / 8px 15px no-repeat,
+    linear-gradient(#744231 0 0) 7px 38px / 9px 4px no-repeat,
+    linear-gradient(#744231 0 0) 20px 38px / 10px 4px no-repeat;
+}
+
+.sprite-preview.female::before {
+  left: 18px;
+  top: 4px;
+  width: 20px;
+  height: 22px;
+  background:
+    linear-gradient(#a76635 0 0) 0 0 / 20px 22px no-repeat,
+    linear-gradient(#d99c70 0 0) 4px 7px / 12px 13px no-repeat;
+}
+
+.sprite-preview.female::after {
+  left: 10px;
+  top: 25px;
+  width: 36px;
+  height: 40px;
+  background:
+    linear-gradient(#513a34 0 0) 3px 0 / 11px 27px no-repeat,
+    linear-gradient(#2c2832 0 0) 13px 0 / 17px 23px no-repeat,
+    linear-gradient(#6d5142 0 0) 27px 0 / 7px 22px no-repeat,
+    linear-gradient(#4a4547 0 0) 12px 23px / 8px 15px no-repeat,
+    linear-gradient(#5d5652 0 0) 23px 23px / 8px 15px no-repeat,
+    linear-gradient(#242322 0 0) 11px 38px / 11px 4px no-repeat,
+    linear-gradient(#242322 0 0) 24px 38px / 10px 4px no-repeat;
+}
+
 .menu-actions {
   display: grid;
   gap: 10px;

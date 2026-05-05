@@ -50,6 +50,16 @@
       <div class="menu-card">
         <span>Dead Grid</span>
         <strong>Zombie Survival</strong>
+        <div class="character-select" aria-label="Choose survivor">
+          <button class="character-option selected" id="maleCharacterButton" type="button" data-character="male" aria-pressed="true">
+            <span class="sprite-preview male"></span>
+            <b>Male</b>
+          </button>
+          <button class="character-option" id="femaleCharacterButton" type="button" data-character="female" aria-pressed="false">
+            <span class="sprite-preview female"></span>
+            <b>Female</b>
+          </button>
+        </div>
         <div class="menu-actions">
           <button id="newGameButton" type="button">Start New Game</button>
           <button id="loadGameButton" type="button">Load Game</button>

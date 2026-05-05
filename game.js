@@ -29,6 +29,7 @@ const ui = {
   pauseLoadButton: document.getElementById("pauseLoadButton"),
   pauseNewButton: document.getElementById("pauseNewButton"),
   quitGameButton: document.getElementById("quitGameButton"),
+  characterButtons: document.querySelectorAll(".character-option"),
   deathScreen: document.getElementById("deathScreen"),
   restartButton: document.getElementById("restartButton")
 };
@@ -48,6 +49,40 @@ const zombies = [];
 const crates = [];
 const particles = [];
 const drops = [];
+
+const FRAME_SIZE = 128;
+const spriteSheets = {};
+const playerSpriteSets = {
+  male: {
+    folder: "Raider_1",
+    idle: "Idle.png",
+    walk: "Walk.png",
+    run: "Run.png",
+    shoot: "Shot.png",
+    reload: "Recharge.png",
+    hurt: "Hurt.png",
+    dead: "Dead.png"
+  },
+  female: {
+    folder: "Raider_2",
+    idle: "Idle.png",
+    walk: "Walk.png",
+    run: "Run.png",
+    shoot: "Shot_2.png",
+    reload: "Recharge.png",
+    hurt: "Hurt.png",
+    dead: "Dead.png"
+  }
+};
+
+const zombieSpriteSets = {
+  zombie1: { folder: "Zombie_1", idle: "Idle.png", walk: "Walk.png", attack: "Attack.png", hurt: "Hurt.png", dead: "Dead.png" },
+  zombie2: { folder: "Zombie_2", idle: "Idle.png", walk: "Walk.png", attack: "Attack.png", hurt: "Hurt.png", dead: "Dead.png" },
+  zombie3: { folder: "Zombie_3", idle: "Idle.png", walk: "Walk.png", attack: "Attack.png", hurt: "Hurt.png", dead: "Dead.png" },
+  zombie4: { folder: "Zombie_4", idle: "Idle.png", walk: "Walk.png", attack: "Attack.png", hurt: "Hurt.png", dead: "Dead.png" }
+};
+
+const zombieSetKeys = Object.keys(zombieSpriteSets);
 
 const weapons = [
   {
@@ -160,8 +195,13 @@ const player = {
   reloading: 0,
   lastShot: -99,
   alive: true,
-  invulnerable: 0
+  invulnerable: 0,
+  character: "male",
+  facing: 1,
+  shotTimer: 0
 };
+
+let selectedCharacter = "male";
 
 const world = {
   time: 0,
@@ -176,6 +216,12 @@ const world = {
 
 const SAVE_KEY = "dead-grid-save-v1";
 const SAFE_ZONE_RADIUS = 86;
+const safeZones = [
+  { id: "base", name: "Base Camp", x: 0, y: 0, radius: SAFE_ZONE_RADIUS },
+  { id: "ranger", name: "Ranger Cache", x: -720, y: -520, radius: 74 },
+  { id: "bridge", name: "Bridge Camp", x: 180, y: 690, radius: 70 },
+  { id: "checkpoint", name: "Old Checkpoint", x: 980, y: -330, radius: 78 }
+];
 
 function resize() {
   const scale = window.devicePixelRatio || 1;
@@ -191,12 +237,62 @@ function rand(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function hash2(x, y, salt = 0) {
+  return Math.abs(Math.sin(x * 12.9898 + y * 78.233 + salt * 37.719) * 43758.5453) % 1;
+}
+
 function dist(a, b, c, d) {
   return Math.hypot(a - c, b - d);
 }
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function validCharacter(character) {
+  return character === "female" ? "female" : "male";
+}
+
+function spriteKey(folder, file) {
+  return `${folder}/${file}`;
+}
+
+function loadSpriteSheets() {
+  const loadSet = (set) => {
+    Object.values(set).forEach((file) => {
+      if (file === set.folder) return;
+      const key = spriteKey(set.folder, file);
+      if (spriteSheets[key]) return;
+      const image = new Image();
+      image.src = `sprites/${set.folder}/${file}`;
+      spriteSheets[key] = { image, frames: 1, loaded: false };
+      image.addEventListener("load", () => {
+        spriteSheets[key].frames = Math.max(1, Math.floor(image.width / FRAME_SIZE));
+        spriteSheets[key].loaded = true;
+      });
+    });
+  };
+  Object.values(playerSpriteSets).forEach(loadSet);
+  Object.values(zombieSpriteSets).forEach(loadSet);
+}
+
+function getSpriteSheet(set, action) {
+  const file = set[action] || set.idle;
+  return spriteSheets[spriteKey(set.folder, file)];
+}
+
+function drawSpriteSheetFrame(sheet, frame, x, y, scale, facing, alpha = 1) {
+  if (!sheet || !sheet.loaded) return false;
+  const sx = (frame % sheet.frames) * FRAME_SIZE;
+  const drawW = FRAME_SIZE * scale;
+  const drawH = FRAME_SIZE * scale;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(Math.round(x), Math.round(y));
+  ctx.scale(facing, 1);
+  ctx.drawImage(sheet.image, sx, 0, FRAME_SIZE, FRAME_SIZE, -drawW / 2, -drawH + 25 * scale, drawW, drawH);
+  ctx.restore();
+  return true;
 }
 
 function unlockedRadius() {
@@ -207,8 +303,20 @@ function currentZone() {
   return Math.max(1, Math.floor(Math.hypot(player.x, player.y) / 430) + 1);
 }
 
+function getSafeZoneAt(x, y) {
+  return safeZones.find((zone) => dist(x, y, zone.x, zone.y) <= zone.radius) || null;
+}
+
+function isInAnySafeZone(x, y, padding = 0) {
+  return safeZones.some((zone) => dist(x, y, zone.x, zone.y) <= zone.radius + padding);
+}
+
 function isPlayerInSafeZone() {
-  return Math.hypot(player.x, player.y) <= SAFE_ZONE_RADIUS;
+  return Boolean(getSafeZoneAt(player.x, player.y));
+}
+
+function canStandAt(x, y) {
+  return terrainAt(x, y) !== "water";
 }
 
 function techCost(item) {
@@ -309,6 +417,26 @@ function screenToWorld(x, y) {
   };
 }
 
+function riverCenter(x) {
+  return 520 + Math.sin(x * 0.004) * 56 + Math.sin(x * 0.0017) * 34;
+}
+
+function isBridgeTile(x, y) {
+  return Math.abs(x) < 88 && Math.abs(y - riverCenter(x)) < 96;
+}
+
+function terrainAt(x, y) {
+  const river = Math.abs(y - riverCenter(x));
+  if (river < 70 && !isBridgeTile(x, y)) return "water";
+  if (isBridgeTile(x, y)) return "bridge";
+  if (isInAnySafeZone(x, y, 74)) return "camp";
+  if (Math.abs(x) < 54 && y > -60 && y < riverCenter(x) + 40) return "path";
+  if (Math.abs(y + 330 + Math.sin(x * 0.003) * 42) < 50) return "road";
+  if (x < -820 || y < -780) return "forest";
+  if (x > 980 || y > 980) return "dry";
+  return "grass";
+}
+
 function spawnCrate() {
   const maxR = Math.max(260, unlockedRadius() - 120);
   const minR = Math.min(maxR - 60, 190);
@@ -341,28 +469,42 @@ function spawnZombie() {
   if (!player.alive) return;
   let x = 0;
   let y = 0;
-  for (let tries = 0; tries < 18; tries += 1) {
+  let zone = 1;
+  let found = false;
+  for (let tries = 0; tries < 44; tries += 1) {
     const angle = rand(0, Math.PI * 2);
-    const radius = rand(360, unlockedRadius() + 80);
+    const maxRadius = Math.max(850, unlockedRadius() + 120);
+    const minRadius = Math.min(maxRadius - 80, 620);
+    const radius = rand(minRadius, maxRadius);
     x = Math.cos(angle) * radius;
     y = Math.sin(angle) * radius;
-    if (dist(x, y, player.x, player.y) > 360 && Math.hypot(x, y) > 180) break;
+    zone = Math.floor(Math.hypot(x, y) / 430) + 1;
+    if (
+      dist(x, y, player.x, player.y) > 520 &&
+      !isInAnySafeZone(x, y, 280) &&
+      canStandAt(x, y)
+    ) {
+      found = true;
+      break;
+    }
   }
+  if (!found) return;
 
-  const zone = Math.floor(Math.hypot(x, y) / 430) + 1;
   const roll = Math.random();
-  const type = zone >= 3 && roll > 0.78 ? "brute" : zone >= 2 && roll > 0.52 ? "runner" : "walker";
+  const type = zone >= 5 && roll > 0.62 ? "brute" : zone >= 3 && roll > 0.48 ? "runner" : "walker";
   const profile = {
     walker: { hp: 38, speed: 72, damage: 12, size: 15, color: "#5f8f45" },
     runner: { hp: 28, speed: 126, damage: 10, size: 13, color: "#7aa354" },
     brute: { hp: 95, speed: 58, damage: 22, size: 22, color: "#486f3b" }
   }[type];
 
-  const scale = 1 + zone * 0.12 + world.time * 0.002;
+  const scale = 0.9 + zone * 0.15 + world.time * 0.0015;
   zombies.push({
     x,
     y,
     type,
+    spriteSet: zombieSetKeys[Math.floor(Math.random() * zombieSetKeys.length)],
+    facing: Math.random() > 0.5 ? 1 : -1,
     radius: profile.size,
     hp: Math.round(profile.hp * scale),
     maxHp: Math.round(profile.hp * scale),
@@ -389,6 +531,7 @@ function shoot() {
   }
 
   player.lastShot = world.time;
+  player.shotTimer = 0.22;
   player.ammo -= weapon.ammoUse;
   const angle = Math.atan2(mouse.worldY - player.y, mouse.worldX - player.x);
   for (let i = 0; i < weapon.pellets; i += 1) {
@@ -512,6 +655,7 @@ function saveProgress() {
     level: player.level,
     weaponIndex: player.weaponIndex,
     player: {
+      character: player.character,
       x: player.x,
       y: player.y,
       hp: player.hp,
@@ -531,6 +675,8 @@ function saveProgress() {
       x: zombie.x,
       y: zombie.y,
       type: zombie.type,
+      spriteSet: zombie.spriteSet,
+      facing: zombie.facing,
       radius: zombie.radius,
       hp: zombie.hp,
       maxHp: zombie.maxHp,
@@ -580,6 +726,9 @@ function loadProgress() {
     applyTechStats();
     player.weaponIndex = clamp(Number(data.weaponIndex ?? tech.weapon.level) || 0, 0, tech.weapon.level);
     const savedPlayer = data.player || {};
+    player.character = validCharacter(savedPlayer.character);
+    selectedCharacter = player.character;
+    updateCharacterSelection();
     player.x = Number(savedPlayer.x) || 0;
     player.y = Number(savedPlayer.y) || 0;
     player.hp = clamp(Number(savedPlayer.hp) || player.maxHp, 1, player.maxHp);
@@ -590,6 +739,7 @@ function loadProgress() {
     player.alive = true;
     player.reloading = 0;
     player.invulnerable = 0.8;
+    player.shotTimer = 0;
 
     world.time = Number(data.world?.time) || 0;
     world.nextSpawn = Number(data.world?.nextSpawn) || 0;
@@ -602,6 +752,8 @@ function loadProgress() {
     drops.length = 0;
     (data.zombies || []).forEach((zombie) => zombies.push({
       ...zombie,
+      spriteSet: zombie.spriteSet || zombieSetKeys[0],
+      facing: Number(zombie.facing) || 1,
       aggro: Boolean(zombie.aggro),
       alertTimer: Number(zombie.alertTimer) || 0,
       wanderAngle: Number(zombie.wanderAngle) || rand(0, Math.PI * 2),
@@ -635,6 +787,7 @@ function clearProgress() {
   player.xp = 0;
   player.level = 1;
   player.weaponIndex = 0;
+  player.character = validCharacter(selectedCharacter);
   world.time = 0;
   world.nextSpawn = 0;
   world.nextCrate = 0;
@@ -646,7 +799,7 @@ function clearProgress() {
 
 function ensureWorldPopulated() {
   while (crates.filter((crate) => !crate.looted).length < 8) spawnCrate();
-  while (zombies.length < 16) spawnZombie();
+  while (zombies.length < 7) spawnZombie();
 }
 
 function damagePlayer(amount) {
@@ -678,6 +831,7 @@ function restartRun(showMessage = true) {
   player.reloading = 0;
   player.alive = true;
   player.invulnerable = 1;
+  player.shotTimer = 0;
   world.state = "playing";
   bullets.length = 0;
   zombies.length = 0;
@@ -687,6 +841,19 @@ function restartRun(showMessage = true) {
   ui.deathScreen.hidden = true;
   ensureWorldPopulated();
   if (showMessage) flash("Back at base");
+}
+
+function setSelectedCharacter(character) {
+  selectedCharacter = validCharacter(character);
+  updateCharacterSelection();
+}
+
+function updateCharacterSelection() {
+  ui.characterButtons.forEach((button) => {
+    const selected = button.dataset.character === selectedCharacter;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
 }
 
 function startGame(fromSave = false) {
@@ -704,6 +871,15 @@ function startGame(fromSave = false) {
   mouse.down = false;
   updateHud();
   flash(fromSave ? "Save loaded" : "New run started");
+}
+
+function openNewGameMenu() {
+  world.state = "menu";
+  ui.mainMenu.hidden = false;
+  ui.pauseMenu.hidden = true;
+  ui.deathScreen.hidden = true;
+  mouse.down = false;
+  updateMenuButtons();
 }
 
 function pauseGame() {
@@ -811,10 +987,13 @@ function updatePlayer(dt) {
     const length = Math.hypot(dx, dy);
     dx /= length;
     dy /= length;
+    if (Math.abs(dx) > 0.12) player.facing = dx > 0 ? 1 : -1;
     const exhausted = player.stamina <= 4;
     const speed = player.speed * (exhausted ? 0.55 : 1);
-    player.x += dx * speed * dt;
-    player.y += dy * speed * dt;
+    const nextX = player.x + dx * speed * dt;
+    const nextY = player.y + dy * speed * dt;
+    if (canStandAt(nextX, player.y)) player.x = nextX;
+    if (canStandAt(player.x, nextY)) player.y = nextY;
     player.stamina = clamp(player.stamina - 10 * dt, 0, player.maxStamina);
   } else {
     player.stamina = clamp(player.stamina + 24 * dt, 0, player.maxStamina);
@@ -828,14 +1007,15 @@ function updatePlayer(dt) {
     flash("Perimeter limit reached");
   }
 
-  const baseDistance = Math.hypot(player.x, player.y);
-  if (baseDistance <= SAFE_ZONE_RADIUS) {
+  const safeZone = getSafeZoneAt(player.x, player.y);
+  if (safeZone) {
     player.hp = clamp(player.hp + 7 * dt, 0, player.maxHp);
     player.armor = clamp(player.armor + 9 * dt, 0, player.maxArmor);
     player.stamina = clamp(player.stamina + 34 * dt, 0, player.maxStamina);
   }
 
   player.invulnerable = Math.max(0, player.invulnerable - dt);
+  player.shotTimer = Math.max(0, player.shotTimer - dt);
 }
 
 function updateShooting(dt) {
@@ -890,7 +1070,8 @@ function updateBullets(dt) {
 }
 
 function updateZombies(dt) {
-  const playerSafe = isPlayerInSafeZone();
+  const safeZone = getSafeZoneAt(player.x, player.y);
+  const playerSafe = Boolean(safeZone);
   for (const zombie of zombies) {
     const d = dist(player.x, player.y, zombie.x, zombie.y);
     if (playerSafe) {
@@ -921,8 +1102,8 @@ function updateZombies(dt) {
       const angle = Math.atan2(player.y - zombie.y, player.x - zombie.x);
       moveX += Math.cos(angle);
       moveY += Math.sin(angle);
-    } else if (playerSafe && Math.hypot(zombie.x, zombie.y) < SAFE_ZONE_RADIUS + 150) {
-      const awayFromBase = Math.atan2(zombie.y, zombie.x);
+    } else if (safeZone && dist(zombie.x, zombie.y, safeZone.x, safeZone.y) < safeZone.radius + 150) {
+      const awayFromBase = Math.atan2(zombie.y - safeZone.y, zombie.x - safeZone.x);
       moveX += Math.cos(awayFromBase) * 0.9;
       moveY += Math.sin(awayFromBase) * 0.9;
     } else {
@@ -937,8 +1118,13 @@ function updateZombies(dt) {
 
     const moveLength = Math.hypot(moveX, moveY) || 1;
     const speed = zombie.speed * (zombie.aggro ? 1 : 0.32);
-    zombie.x += (moveX / moveLength) * speed * dt;
-    zombie.y += (moveY / moveLength) * speed * dt;
+    if (Math.abs(moveX) > 0.08) zombie.facing = moveX > 0 ? 1 : -1;
+    const nextX = zombie.x + (moveX / moveLength) * speed * dt;
+    const nextY = zombie.y + (moveY / moveLength) * speed * dt;
+    if (canStandAt(nextX, zombie.y)) zombie.x = nextX;
+    else zombie.wanderAngle += Math.PI * 0.5;
+    if (canStandAt(zombie.x, nextY)) zombie.y = nextY;
+    else zombie.wanderAngle += Math.PI * 0.5;
 
     const limit = unlockedRadius() + 100;
     const fromBase = Math.hypot(zombie.x, zombie.y);
@@ -993,11 +1179,12 @@ function updateParticles(dt) {
 }
 
 function updateSpawns(dt) {
-  const pressure = Math.min(1.6, world.time / 180);
-  if (world.time > world.nextSpawn && zombies.length < 34 + currentZone() * 5) {
+  const zone = currentZone();
+  const pressure = Math.min(1.2, world.time / 240);
+  const targetPopulation = 7 + zone * 3 + tech.range.level * 2;
+  if (world.time > world.nextSpawn && zombies.length < targetPopulation) {
     spawnZombie();
-    const zone = currentZone();
-    world.nextSpawn = world.time + Math.max(0.28, 1.45 - zone * 0.12 - pressure * 0.35);
+    world.nextSpawn = world.time + Math.max(0.7, 3.6 - zone * 0.26 - pressure * 0.45);
   }
   if (world.time > world.nextCrate && crates.filter((crate) => !crate.looted).length < 12) {
     spawnCrate();
@@ -1031,6 +1218,7 @@ function updateHud() {
 function draw() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGround();
+  drawSceneryProps();
   drawGate();
   drawBase();
   drawCrates();
@@ -1056,26 +1244,69 @@ function drawGround() {
   for (let x = startX; x < endX; x += tile) {
     for (let y = startY; y < endY; y += tile) {
       const screen = worldToScreen(x, y);
-      const hash = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+      const hash = hash2(x, y);
       const sx = Math.floor(screen.x);
       const sy = Math.floor(screen.y);
-      ctx.fillStyle = hash > 0.78 ? "#31502b" : hash > 0.46 ? "#2c4728" : "#263d24";
+      const terrain = terrainAt(x + tile / 2, y + tile / 2);
+      if (terrain === "water") {
+        const shimmer = Math.sin(world.time * 1.8 + x * 0.035 + y * 0.02) * 0.5 + 0.5;
+        ctx.fillStyle = shimmer > 0.62 ? "#319a82" : hash > 0.55 ? "#2f8f7a" : "#267a6f";
+      } else if (terrain === "bridge") {
+        ctx.fillStyle = hash > 0.5 ? "#8a6743" : "#765638";
+      } else if (terrain === "path") {
+        ctx.fillStyle = hash > 0.5 ? "#b99d68" : "#a88c5d";
+      } else if (terrain === "road") {
+        ctx.fillStyle = hash > 0.5 ? "#565a54" : "#4b504b";
+      } else if (terrain === "forest") {
+        ctx.fillStyle = hash > 0.6 ? "#213a23" : "#1c321e";
+      } else if (terrain === "dry") {
+        ctx.fillStyle = hash > 0.58 ? "#9a894f" : "#877947";
+      } else if (terrain === "camp") {
+        ctx.fillStyle = hash > 0.56 ? "#526d38" : "#496333";
+      } else {
+        ctx.fillStyle = hash > 0.78 ? "#31502b" : hash > 0.46 ? "#2c4728" : "#263d24";
+      }
       ctx.fillRect(sx, sy, tile, tile);
 
-      ctx.fillStyle = "rgba(18, 36, 18, 0.22)";
+      if (terrain === "water") {
+        const wave = Math.floor((world.time * 18 + hash * 16) % 18);
+        ctx.fillStyle = "rgba(194, 235, 213, 0.18)";
+        ctx.fillRect(sx + ((wave + Math.floor(hash * 7)) % 9), sy + 5 + Math.floor(hash * 12), 18, 2);
+        ctx.fillStyle = "rgba(34, 85, 78, 0.18)";
+        ctx.fillRect(sx, sy + tile - 5 - Math.floor(wave / 5), tile, 2);
+        continue;
+      }
+
+      if (terrain === "bridge") {
+        ctx.fillStyle = "rgba(45, 28, 18, 0.34)";
+        ctx.fillRect(sx, sy + 4, tile, 3);
+        ctx.fillRect(sx, sy + 22, tile, 3);
+        ctx.fillStyle = "#513b2b";
+        ctx.fillRect(sx + 4, sy, 4, tile);
+        ctx.fillRect(sx + tile - 8, sy, 4, tile);
+        continue;
+      }
+
+      if (terrain === "road" && hash > 0.72) {
+        ctx.fillStyle = "#2f352f";
+        ctx.fillRect(sx + 4, sy + 14, 9, 3);
+        ctx.fillRect(sx + 20, sy + 7, 6, 4);
+      }
+
+      ctx.fillStyle = terrain === "dry" ? "rgba(91, 77, 42, 0.22)" : "rgba(18, 36, 18, 0.22)";
       ctx.fillRect(sx, sy + tile - 4, tile, 4);
-      ctx.fillStyle = "rgba(96, 137, 67, 0.18)";
+      ctx.fillStyle = terrain === "dry" ? "rgba(184, 162, 84, 0.16)" : "rgba(96, 137, 67, 0.18)";
       ctx.fillRect(sx, sy, tile, 4);
 
-      const bladeHash = Math.abs(Math.sin((x + 19) * 41.13 + (y - 7) * 9.71) * 9317.21) % 1;
-      if (bladeHash > 0.18) {
+      const bladeHash = hash2(x + 19, y - 7, 2);
+      if ((terrain === "grass" || terrain === "forest" || terrain === "camp") && bladeHash > 0.18) {
         ctx.fillStyle = bladeHash > 0.72 ? "#557b39" : "#3f662f";
         ctx.fillRect(sx + 5, sy + 9, 4, 11);
         ctx.fillRect(sx + 11, sy + 5, 3, 8);
         ctx.fillRect(sx + 22, sy + 15, 5, 10);
       }
 
-      if (hash > 0.9) {
+      if ((terrain === "grass" || terrain === "dry") && hash > 0.9) {
         ctx.fillStyle = "#5a4930";
         ctx.fillRect(sx + 7, sy + 20, 9, 5);
         ctx.fillRect(sx + 18, sy + 8, 5, 4);
@@ -1101,6 +1332,93 @@ function drawGround() {
   }
 }
 
+function drawSceneryProps() {
+  const tile = 128;
+  const startX = Math.floor((camera.x - window.innerWidth / 2) / tile) * tile;
+  const startY = Math.floor((camera.y - window.innerHeight / 2) / tile) * tile;
+  const endX = camera.x + window.innerWidth / 2 + tile;
+  const endY = camera.y + window.innerHeight / 2 + tile;
+
+  for (let y = startY; y < endY; y += tile) {
+    for (let x = startX; x < endX; x += tile) {
+      const centerX = x + tile / 2;
+      const centerY = y + tile / 2;
+      const terrain = terrainAt(centerX, centerY);
+      const h = hash2(x, y, 8);
+      if (isInAnySafeZone(centerX, centerY, 150) || terrain === "water" || terrain === "bridge" || terrain === "path") continue;
+
+      const screen = worldToScreen(centerX + (hash2(x, y, 9) - 0.5) * 54, centerY + (hash2(x, y, 10) - 0.5) * 54);
+      if (terrain === "forest" && h > 0.28) {
+        drawTree(screen.x, screen.y, h);
+      } else if (terrain === "grass" && h > 0.82) {
+        drawBush(screen.x, screen.y, h);
+      } else if (terrain === "road" && h > 0.7) {
+        drawBrokenCar(screen.x, screen.y, h);
+      } else if (terrain === "dry" && h > 0.72) {
+        drawRubble(screen.x, screen.y, h);
+      }
+    }
+  }
+}
+
+function drawTree(x, y, seed) {
+  ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+  ctx.fillRect(Math.floor(x - 26), Math.floor(y + 20), 54, 10);
+  ctx.fillStyle = "#4d321f";
+  ctx.fillRect(Math.floor(x - 9), Math.floor(y - 8), 18, 44);
+  ctx.fillStyle = "#2f4e27";
+  ctx.fillRect(Math.floor(x - 35), Math.floor(y - 52), 70, 34);
+  ctx.fillRect(Math.floor(x - 48), Math.floor(y - 32), 96, 34);
+  ctx.fillStyle = seed > 0.6 ? "#3f642e" : "#36582b";
+  ctx.fillRect(Math.floor(x - 28), Math.floor(y - 65), 58, 30);
+  ctx.fillRect(Math.floor(x - 42), Math.floor(y - 42), 36, 26);
+  ctx.fillRect(Math.floor(x + 8), Math.floor(y - 43), 36, 27);
+  ctx.fillStyle = "#1c321e";
+  ctx.fillRect(Math.floor(x - 43), Math.floor(y - 18), 20, 7);
+  ctx.fillRect(Math.floor(x + 22), Math.floor(y - 16), 18, 7);
+}
+
+function drawBush(x, y, seed) {
+  ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+  ctx.fillRect(Math.floor(x - 18), Math.floor(y + 8), 36, 6);
+  ctx.fillStyle = seed > 0.5 ? "#4f7835" : "#456f31";
+  ctx.fillRect(Math.floor(x - 18), Math.floor(y - 8), 36, 18);
+  ctx.fillStyle = "#5c8940";
+  ctx.fillRect(Math.floor(x - 8), Math.floor(y - 16), 22, 14);
+  ctx.fillRect(Math.floor(x - 25), Math.floor(y - 2), 17, 12);
+}
+
+function drawRubble(x, y, seed) {
+  ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+  ctx.fillRect(Math.floor(x - 20), Math.floor(y + 8), 44, 7);
+  ctx.fillStyle = "#6b6f68";
+  ctx.fillRect(Math.floor(x - 18), Math.floor(y - 5), 22, 15);
+  ctx.fillStyle = "#8a887c";
+  ctx.fillRect(Math.floor(x + 4), Math.floor(y - 13), 24, 20);
+  ctx.fillStyle = "#55443a";
+  ctx.fillRect(Math.floor(x - 29), Math.floor(y + 1), 12, 9);
+  if (seed > 0.55) {
+    ctx.fillStyle = "#9d8d5b";
+    ctx.fillRect(Math.floor(x + 27), Math.floor(y - 2), 9, 8);
+  }
+}
+
+function drawBrokenCar(x, y, seed) {
+  ctx.fillStyle = "rgba(0, 0, 0, 0.27)";
+  ctx.fillRect(Math.floor(x - 31), Math.floor(y + 15), 64, 9);
+  ctx.fillStyle = seed > 0.5 ? "#733e37" : "#4f6670";
+  ctx.fillRect(Math.floor(x - 30), Math.floor(y - 10), 60, 27);
+  ctx.fillStyle = "#252b2f";
+  ctx.fillRect(Math.floor(x - 14), Math.floor(y - 21), 26, 14);
+  ctx.fillStyle = "#1a1d1f";
+  ctx.fillRect(Math.floor(x - 24), Math.floor(y + 13), 12, 12);
+  ctx.fillRect(Math.floor(x + 13), Math.floor(y + 13), 12, 12);
+  ctx.fillStyle = "#9a8b64";
+  ctx.fillRect(Math.floor(x + 27), Math.floor(y - 4), 8, 5);
+  ctx.fillStyle = "#2f3538";
+  ctx.fillRect(Math.floor(x - 4), Math.floor(y - 18), 17, 9);
+}
+
 function drawGate() {
   const center = worldToScreen(0, 0);
   ctx.save();
@@ -1114,20 +1432,32 @@ function drawGate() {
 }
 
 function drawBase() {
-  const base = worldToScreen(0, 0);
-  ctx.fillStyle = "#2a3c39";
-  ctx.fillRect(Math.floor(base.x - 48), Math.floor(base.y - 48), 96, 96);
-  ctx.fillStyle = "#52665f";
-  ctx.fillRect(Math.floor(base.x - 32), Math.floor(base.y - 30), 64, 60);
-  ctx.fillStyle = "#d8b75f";
-  ctx.fillRect(Math.floor(base.x - 8), Math.floor(base.y - 52), 16, 34);
-  ctx.fillStyle = "#111515";
-  ctx.fillRect(Math.floor(base.x - 8), Math.floor(base.y - 4), 16, 34);
-  ctx.strokeStyle = "rgba(90, 160, 106, 0.44)";
+  safeZones.forEach((zone) => drawSafeZoneCamp(zone));
+}
+
+function drawSafeZoneCamp(zone) {
+  const base = worldToScreen(zone.x, zone.y);
+  ctx.save();
+  ctx.strokeStyle = "rgba(90, 160, 106, 0.48)";
+  ctx.setLineDash([8, 8]);
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(base.x, base.y, SAFE_ZONE_RADIUS, 0, Math.PI * 2);
+  ctx.arc(base.x, base.y, zone.radius, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.restore();
+
+  ctx.fillStyle = "#2a3c39";
+  ctx.fillRect(Math.floor(base.x - 44), Math.floor(base.y - 38), 88, 74);
+  ctx.fillStyle = zone.id === "base" ? "#52665f" : "#5d6049";
+  ctx.fillRect(Math.floor(base.x - 30), Math.floor(base.y - 26), 60, 48);
+  ctx.fillStyle = "#d8b75f";
+  ctx.fillRect(Math.floor(base.x - 7), Math.floor(base.y - 48), 14, 28);
+  ctx.fillStyle = "#111515";
+  ctx.fillRect(Math.floor(base.x - 7), Math.floor(base.y - 3), 14, 25);
+  ctx.fillStyle = "#80664a";
+  ctx.fillRect(Math.floor(base.x + 31), Math.floor(base.y + 12), 28, 10);
+  ctx.fillStyle = "#29302b";
+  ctx.fillRect(Math.floor(base.x + 37), Math.floor(base.y - 10), 13, 22);
 }
 
 function drawCrates() {
@@ -1165,41 +1495,131 @@ function drawBullets() {
 function drawZombies() {
   for (const zombie of zombies) {
     const s = worldToScreen(zombie.x, zombie.y);
-    ctx.fillStyle = zombie.hitFlash > 0 ? "#e2f0c4" : zombie.color;
-    ctx.fillRect(Math.floor(s.x - zombie.radius), Math.floor(s.y - zombie.radius), zombie.radius * 2, zombie.radius * 2);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.24)";
+    ctx.fillRect(Math.floor(s.x - 20), Math.floor(s.y + 37), 40, 7);
+
+    const moving = zombie.aggro || zombie.alertTimer > 0;
+    const action = zombie.hitFlash > 0 ? "hurt" : zombie.attackCooldown > 0.45 ? "attack" : moving ? "walk" : "idle";
+    const sheet = getSpriteSheet(zombieSpriteSets[zombie.spriteSet] || zombieSpriteSets.zombie1, action);
+    const fps = action === "attack" ? 12 : action === "hurt" ? 10 : moving ? 10 : 5;
+    const frame = Math.floor((world.time + zombie.x * 0.001 + zombie.y * 0.001) * fps);
+    const drewSprite = drawSpriteSheetFrame(sheet, frame, s.x, s.y + 22, 0.62, zombie.facing || 1, zombie.hitFlash > 0 ? 0.85 : 1);
+
+    if (!drewSprite) {
+      ctx.fillStyle = zombie.hitFlash > 0 ? "#e2f0c4" : zombie.color;
+      ctx.fillRect(Math.floor(s.x - zombie.radius), Math.floor(s.y - zombie.radius), zombie.radius * 2, zombie.radius * 2);
+      ctx.fillStyle = "#1a211e";
+      ctx.fillRect(Math.floor(s.x - 5), Math.floor(s.y - 3), 3, 3);
+      ctx.fillRect(Math.floor(s.x + 4), Math.floor(s.y - 3), 3, 3);
+    }
+
     ctx.fillStyle = "#263622";
-    ctx.fillRect(Math.floor(s.x - zombie.radius + 4), Math.floor(s.y - zombie.radius - 5), zombie.radius * 2 - 8, 4);
+    ctx.fillRect(Math.floor(s.x - 18), Math.floor(s.y - 48), 36, 4);
     ctx.fillStyle = "#a74b44";
-    ctx.fillRect(
-      Math.floor(s.x - zombie.radius + 4),
-      Math.floor(s.y - zombie.radius - 5),
-      Math.floor((zombie.radius * 2 - 8) * (zombie.hp / zombie.maxHp)),
-      4
-    );
-    ctx.fillStyle = "#1a211e";
-    ctx.fillRect(Math.floor(s.x - 5), Math.floor(s.y - 3), 3, 3);
-    ctx.fillRect(Math.floor(s.x + 4), Math.floor(s.y - 3), 3, 3);
+    ctx.fillRect(Math.floor(s.x - 18), Math.floor(s.y - 48), Math.floor(36 * (zombie.hp / zombie.maxHp)), 4);
   }
 }
 
 function drawPlayer() {
   const s = worldToScreen(player.x, player.y);
-  const angle = Math.atan2(mouse.worldY - player.y, mouse.worldX - player.x);
   const flicker = player.invulnerable > 0 && Math.floor(world.time * 24) % 2 === 0;
   if (flicker) return;
 
+  const moving = world.state === "playing" && (keys.has("w") || keys.has("a") || keys.has("s") || keys.has("d"));
+  const facing = mouse.worldX < player.x ? -1 : 1;
+  player.facing = facing;
+  const set = playerSpriteSets[player.character] || playerSpriteSets.male;
+  const action = player.reloading > 0 ? "reload" : player.shotTimer > 0 ? "shoot" : moving ? "walk" : "idle";
+  const sheet = getSpriteSheet(set, action);
+  const fps = action === "reload" ? 12 : action === "shoot" ? 18 : moving ? 10 : 5;
+  const frame = Math.floor(world.time * fps);
+  const walk = moving ? Math.sin(world.time * 15) : 0;
+  const bob = moving ? Math.abs(Math.sin(world.time * 15)) * 2 : Math.sin(world.time * 3) * 0.9;
+
   ctx.save();
-  ctx.translate(Math.floor(s.x), Math.floor(s.y));
-  ctx.rotate(angle);
-  ctx.fillStyle = "#5b93a8";
-  ctx.fillRect(-13, -11, 25, 22);
-  ctx.fillStyle = "#d9b58a";
-  ctx.fillRect(4, -7, 13, 14);
-  ctx.fillStyle = "#222927";
-  ctx.fillRect(12, -4, 23, 8);
-  ctx.fillStyle = "#edf2df";
-  ctx.fillRect(28, -2, 8, 4);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
+  ctx.fillRect(Math.floor(s.x - 20), Math.floor(s.y + 39), 42, 7);
+  const drewSprite = drawSpriteSheetFrame(sheet, frame, s.x, s.y + 22 + bob, 0.66, facing);
+  if (drewSprite) {
+    ctx.restore();
+    return;
+  }
+
+  ctx.translate(Math.floor(s.x), Math.floor(s.y + bob));
+  ctx.scale(facing, 1);
+  if (player.character === "female") {
+    drawFemaleSurvivor(walk, moving);
+  } else {
+    drawMaleSurvivor(walk, moving);
+  }
   ctx.restore();
+}
+
+function px(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+}
+
+function drawMaleSurvivor(walk, moving) {
+  const frontLeg = moving ? walk * 4 : 0;
+  const backLeg = moving ? -walk * 3 : 0;
+  const armSwing = moving ? -walk * 2 : 0;
+
+  px(-9 + backLeg, 4, 7, 18, "#171b22");
+  px(-10 + backLeg, 20, 9, 5, "#633927");
+  px(3 + frontLeg, 4, 7, 18, "#222838");
+  px(2 + frontLeg, 20, 11, 5, "#74422e");
+  px(-14, -20, 8, 24, "#34242d");
+  px(-19, -16, 7, 20, "#241d23");
+  px(-17, 0, 5, 7, "#c48461");
+  px(-8, -23, 19, 29, "#263331");
+  px(-5, -22, 15, 25, "#394b45");
+  px(-1, -21, 3, 26, "#17201f");
+  px(8, -18 + armSwing, 6, 20, "#24302d");
+  px(11, -1 + armSwing, 5, 7, "#d49a72");
+  px(-12, -18, 5, 17, "#43332b");
+  px(-11, -18, 2, 15, "#855936");
+  px(5, -42, 16, 17, "#d99b72");
+  px(3, -46, 18, 8, "#6d342b");
+  px(1, -41, 6, 12, "#5a2b27");
+  px(17, -36, 5, 8, "#2a2020");
+  px(18, -31, 4, 4, "#4f2b27");
+  px(15, -36, 2, 2, "#1b1718");
+  px(12, -26, 26, 6, "#23282d");
+  px(35, -24, 9, 3, "#d8d1bd");
+  px(18, -28, 4, 9, "#111516");
+  px(-11, -28, 4, 28, "#1b2022");
+  px(-9, -33, 3, 22, "#6e553d");
+}
+
+function drawFemaleSurvivor(walk, moving) {
+  const frontLeg = moving ? walk * 4 : 0;
+  const backLeg = moving ? -walk * 3 : 0;
+  const armSwing = moving ? -walk * 2 : 0;
+
+  px(-8 + backLeg, 4, 7, 18, "#3d3c42");
+  px(-10 + backLeg, 20, 10, 5, "#23201f");
+  px(4 + frontLeg, 4, 7, 18, "#595250");
+  px(3 + frontLeg, 20, 10, 5, "#24211f");
+  px(-15, -20, 8, 25, "#563c32");
+  px(-18, -16, 7, 20, "#342824");
+  px(-17, 1, 5, 7, "#c88763");
+  px(-8, -24, 20, 30, "#242331");
+  px(-4, -23, 13, 25, "#30273a");
+  px(-1, -22, 3, 26, "#5b3834");
+  px(9, -18 + armSwing, 6, 20, "#695040");
+  px(12, -1 + armSwing, 5, 7, "#d99c70");
+  px(-11, -19, 5, 18, "#4d322b");
+  px(4, -43, 16, 17, "#d99c70");
+  px(1, -48, 20, 10, "#a26034");
+  px(0, -40, 6, 20, "#8d522f");
+  px(17, -39, 5, 18, "#7b452b");
+  px(16, -35, 2, 2, "#1b1718");
+  px(14, -27, 25, 6, "#1f2429");
+  px(36, -25, 8, 3, "#d8d1bd");
+  px(19, -29, 4, 9, "#111516");
+  px(-12, -29, 4, 29, "#1a1f23");
+  px(-10, -35, 3, 24, "#6e553d");
 }
 
 function drawParticles() {
@@ -1246,7 +1666,12 @@ function drawMinimap() {
     6
   );
   ctx.fillStyle = "#5aa06a";
-  ctx.fillRect(x + size / 2 - 3, y + size / 2 - 3, 6, 6);
+  for (const zone of safeZones) {
+    const zx = x + size / 2 + (zone.x / radius) * (size / 2 - 12);
+    const zy = y + size / 2 + (zone.y / radius) * (size / 2 - 12);
+    if (zx < x + 4 || zx > x + size - 4 || zy < y + 4 || zy > y + size - 4) continue;
+    ctx.fillRect(Math.floor(zx - 3), Math.floor(zy - 3), 6, 6);
+  }
   for (const zombie of zombies) {
     const zx = x + size / 2 + (zombie.x / radius) * (size / 2 - 12);
     const zy = y + size / 2 + (zombie.y / radius) * (size / 2 - 12);
@@ -1308,8 +1733,11 @@ function initInput() {
   ui.resumeButton.addEventListener("click", resumeGame);
   ui.saveGameButton.addEventListener("click", saveFromPause);
   ui.pauseLoadButton.addEventListener("click", loadGameFromMenu);
-  ui.pauseNewButton.addEventListener("click", () => startGame(false));
+  ui.pauseNewButton.addEventListener("click", openNewGameMenu);
   ui.quitGameButton.addEventListener("click", quitToMainMenu);
+  ui.characterButtons.forEach((button) => {
+    button.addEventListener("click", () => setSelectedCharacter(button.dataset.character));
+  });
   [ui.upgradePanel, ui.deathScreen, ui.mainMenu, ui.pauseMenu].forEach((element) => {
     element.addEventListener("mousedown", (event) => event.stopPropagation());
     element.addEventListener("mouseup", (event) => event.stopPropagation());
@@ -1328,6 +1756,7 @@ function frame(now) {
 function init() {
   resize();
   window.addEventListener("resize", resize);
+  loadSpriteSheets();
   initInput();
   applyTechStats();
   player.armor = player.maxArmor;
@@ -1337,6 +1766,7 @@ function init() {
   rebuildUpgradePanel();
   updateHud();
   updateMenuButtons();
+  updateCharacterSelection();
   ui.mainMenu.hidden = false;
   ui.pauseMenu.hidden = true;
   ui.deathScreen.hidden = true;
