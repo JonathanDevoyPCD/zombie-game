@@ -65,9 +65,15 @@ const generatedStructureIds = new Set();
 const FRAME_SIZE = 128;
 const SUMMER_GROUND_TILE_SIZE = 192;
 const DAY_LENGTH = 420;
+const MUSIC_VOLUME = 0.2;
 const FOG_CELL_SIZE = 160;
 const FOG_REVEAL_RADIUS = 430;
 const FOG_SAFE_RADIUS = 230;
+const music = {
+  day: new Audio("music/DayMusic.mp3"),
+  night: new Audio("music/NightMusic.mp3"),
+  started: false
+};
 const spriteSheets = {};
 const terrainAssets = {
   ground: createTerrainAssetList(56, (index) => `sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Ground ${String(index).padStart(2, "0")}.png`),
@@ -574,6 +580,46 @@ function timeOfDayLabel() {
   return "Dusk";
 }
 
+function dayMusicAmount() {
+  const progress = dayProgress();
+  if (progress < 0.18 || progress > 0.82) return 0;
+  if (progress < 0.3) return smoothstep((progress - 0.18) / 0.12);
+  if (progress < 0.68) return 1;
+  return 1 - smoothstep((progress - 0.68) / 0.14);
+}
+
+function configureMusic() {
+  [music.day, music.night].forEach((track) => {
+    track.loop = true;
+    track.preload = "auto";
+    track.volume = 0;
+  });
+}
+
+function updateMusicVolumes() {
+  const dayAmount = dayMusicAmount();
+  music.day.volume = MUSIC_VOLUME * dayAmount;
+  music.night.volume = MUSIC_VOLUME * (1 - dayAmount);
+}
+
+function startMusic() {
+  updateMusicVolumes();
+  if (music.started) return;
+  music.started = true;
+  music.day.play().catch(() => {
+    music.started = false;
+  });
+  music.night.play().catch(() => {
+    music.started = false;
+  });
+}
+
+function stopMusic() {
+  music.day.pause();
+  music.night.pause();
+  music.started = false;
+}
+
 function setTimePreset(preset) {
   const presets = {
     morning: 0.3,
@@ -585,6 +631,7 @@ function setTimePreset(preset) {
   if (progress === undefined) return;
   const day = Math.floor(world.time / DAY_LENGTH);
   world.time = day * DAY_LENGTH + DAY_LENGTH * progress;
+  updateMusicVolumes();
   flash(`${preset[0].toUpperCase()}${preset.slice(1)}`);
   updateHud();
 }
@@ -1511,6 +1558,7 @@ function startGame(fromSave = false) {
   ui.pauseMenu.hidden = true;
   ui.deathScreen.hidden = true;
   mouse.down = false;
+  startMusic();
   updateHud();
   flash(fromSave ? "Save loaded" : "New run started");
 }
@@ -1521,6 +1569,7 @@ function openNewGameMenu() {
   ui.pauseMenu.hidden = true;
   ui.deathScreen.hidden = true;
   mouse.down = false;
+  stopMusic();
   updateMenuButtons();
 }
 
@@ -1554,6 +1603,7 @@ function loadGameFromMenu() {
   ui.pauseMenu.hidden = true;
   ui.deathScreen.hidden = true;
   mouse.down = false;
+  startMusic();
   flash("Save loaded");
 }
 
@@ -1569,6 +1619,7 @@ function quitToMainMenu() {
   ui.pauseMenu.hidden = true;
   ui.deathScreen.hidden = true;
   mouse.down = false;
+  stopMusic();
   updateMenuButtons();
 }
 
@@ -1594,11 +1645,13 @@ function update(dt) {
   mouse.worldY = screenToWorld(mouse.x, mouse.y).y;
 
   if (world.state === "menu" || world.state === "paused") {
+    updateMusicVolumes();
     updateHud();
     return;
   }
 
   world.time += dt;
+  updateMusicVolumes();
 
   if (!player.alive) {
     updateParticles(dt);
@@ -3158,6 +3211,7 @@ function init() {
   window.addEventListener("resize", resize);
   loadSpriteSheets();
   loadTerrainAssets();
+  configureMusic();
   initInput();
   applyBaseStats();
   applyTechStats();

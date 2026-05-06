@@ -30,5 +30,6 @@ Open `index.html` in a browser.
 - Procedural farms, cabins, survivor camps, depots, clinics, and radio towers
 - Objective chain that encourages exploration and returning to base
 - Upgradeable base camp with expanding safe-zone stages
+- Looping day and night music with dawn and dusk crossfades
 - Upgradeable tech tree
 - Save, load, new game, and quit-to-menu flow
