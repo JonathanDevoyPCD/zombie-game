@@ -66,12 +66,13 @@ const FRAME_SIZE = 128;
 const SUMMER_GROUND_TILE_SIZE = 192;
 const DAY_LENGTH = 420;
 const MUSIC_VOLUME = 0.2;
+const MUSIC_VERSION = "direct-1";
 const FOG_CELL_SIZE = 160;
 const FOG_REVEAL_RADIUS = 430;
 const FOG_SAFE_RADIUS = 230;
 const music = {
-  day: new Audio("music/DayMusic.mp3"),
-  night: new Audio("music/NightMusic.mp3"),
+  day: new Audio(`music/DayMusic.mp3?v=${MUSIC_VERSION}`),
+  night: new Audio(`music/NightMusic.mp3?v=${MUSIC_VERSION}`),
   started: false
 };
 const spriteSheets = {};
@@ -606,11 +607,11 @@ function startMusic() {
   updateMusicVolumes();
   if (music.started) return;
   music.started = true;
-  music.day.play().catch(() => {
-    music.started = false;
-  });
-  music.night.play().catch(() => {
-    music.started = false;
+  const plays = [music.day.play(), music.night.play()].filter(Boolean);
+  Promise.allSettled(plays).then((results) => {
+    if (results.length && results.every((result) => result.status === "rejected")) {
+      music.started = false;
+    }
   });
 }
 
