@@ -2,6 +2,8 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const lightingCanvas = document.createElement("canvas");
 const lightingCtx = lightingCanvas.getContext("2d");
+const fogCanvas = document.createElement("canvas");
+const fogCtx = fogCanvas.getContext("2d");
 
 ctx.imageSmoothingEnabled = false;
 
@@ -53,17 +55,22 @@ const zombies = [];
 const crates = [];
 const particles = [];
 const drops = [];
+const revealedFog = new Set();
 
 const FRAME_SIZE = 128;
 const SUMMER_GROUND_TILE_SIZE = 192;
 const DAY_LENGTH = 420;
+const FOG_CELL_SIZE = 160;
+const FOG_REVEAL_RADIUS = 430;
+const FOG_SAFE_RADIUS = 230;
 const spriteSheets = {};
 const terrainAssets = {
   ground: createTerrainAssetList(56, (index) => `sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Ground ${String(index).padStart(2, "0")}.png`),
   tent: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tent.png"),
   campfire: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Campfire.png"),
   grass: createTerrainAssetList(20, (index) => `sprites/TerrainOptimized/Grass/Grass-${String(index).padStart(2, "0")}.png`),
-  rocks: createTerrainAssetList(40, (index) => `sprites/TerrainOptimized/Rocks/stone grass-${String(index).padStart(2, "0")}.png`)
+  rocks: createTerrainAssetList(40, (index) => `sprites/TerrainOptimized/Rocks/stone grass-${String(index).padStart(2, "0")}.png`),
+  clouds: createTerrainAssetList(41, (index) => `sprites/Clouds/Asset ${index}.png`)
 };
 const playerSpriteSets = {
   male: {
@@ -241,6 +248,8 @@ function resize() {
   canvas.height = Math.floor(window.innerHeight * scale);
   lightingCanvas.width = window.innerWidth;
   lightingCanvas.height = window.innerHeight;
+  fogCanvas.width = window.innerWidth;
+  fogCanvas.height = window.innerHeight;
   canvas.style.width = `${window.innerWidth}px`;
   canvas.style.height = `${window.innerHeight}px`;
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -368,6 +377,114 @@ function currentZone() {
 
 function exploredRadius() {
   return Math.max(1200, Math.hypot(player.x, player.y) + 700);
+}
+
+function fogKey(cx, cy) {
+  return `${cx},${cy}`;
+}
+
+function fogCellAt(x, y) {
+  return {
+    x: Math.floor(x / FOG_CELL_SIZE),
+    y: Math.floor(y / FOG_CELL_SIZE)
+  };
+}
+
+function isFogRevealedCell(cx, cy) {
+  return revealedFog.has(fogKey(cx, cy));
+}
+
+function isFogRevealedAt(x, y) {
+  const cell = fogCellAt(x, y);
+  return isFogRevealedCell(cell.x, cell.y);
+}
+
+function isCurrentlyVisibleAt(x, y) {
+  if (dist(x, y, player.x, player.y) <= FOG_REVEAL_RADIUS * 0.92) return true;
+  return safeZones.some((zone) => dist(x, y, zone.x, zone.y) <= FOG_SAFE_RADIUS);
+}
+
+function revealFogCircle(x, y, radius) {
+  const minX = Math.floor((x - radius) / FOG_CELL_SIZE);
+  const maxX = Math.floor((x + radius) / FOG_CELL_SIZE);
+  const minY = Math.floor((y - radius) / FOG_CELL_SIZE);
+  const maxY = Math.floor((y + radius) / FOG_CELL_SIZE);
+  for (let cy = minY; cy <= maxY; cy += 1) {
+    for (let cx = minX; cx <= maxX; cx += 1) {
+      const cellX = cx * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+      const cellY = cy * FOG_CELL_SIZE + FOG_CELL_SIZE / 2;
+      if (dist(cellX, cellY, x, y) <= radius + FOG_CELL_SIZE * 0.55) {
+        revealedFog.add(fogKey(cx, cy));
+      }
+    }
+  }
+}
+
+function updateFogOfWar() {
+  revealFogCircle(player.x, player.y, FOG_REVEAL_RADIUS);
+  const safeZone = getSafeZoneAt(player.x, player.y);
+  if (safeZone) revealFogCircle(safeZone.x, safeZone.y, FOG_SAFE_RADIUS);
+}
+
+function fogCloudAsset(cx, cy, salt = 0) {
+  const list = terrainAssets.clouds;
+  return list[Math.floor(hash2(cx, cy, 900 + salt) * list.length) % list.length];
+}
+
+function fogColor(dayColor, nightColor, night, alpha) {
+  const r = Math.round(lerp(dayColor[0], nightColor[0], night));
+  const g = Math.round(lerp(dayColor[1], nightColor[1], night));
+  const b = Math.round(lerp(dayColor[2], nightColor[2], night));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function cutFogHole(x, y, clearRadius, feather) {
+  const radius = clearRadius + feather;
+  const gradient = fogCtx.createRadialGradient(x, y, clearRadius, x, y, radius);
+  gradient.addColorStop(0, "rgba(0, 0, 0, 1)");
+  gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+  fogCtx.fillStyle = gradient;
+  fogCtx.beginPath();
+  fogCtx.arc(x, y, radius, 0, Math.PI * 2);
+  fogCtx.fill();
+}
+
+function drawFogCloud(cx, cy, screenX, screenY, alpha, night, salt = 0) {
+  const asset = fogCloudAsset(cx, cy, salt);
+  if (!asset?.loaded) return;
+  const scale = 1.7 + hash2(cx, cy, 920 + salt) * 0.7;
+  const width = FOG_CELL_SIZE * scale;
+  const height = width * (asset.image.height / asset.image.width);
+  const drift = Math.sin(world.time * 0.02 + hash2(cx, cy, 930 + salt) * Math.PI * 2) * 8;
+  const offsetX = (hash2(cx, cy, 940 + salt) - 0.5) * FOG_CELL_SIZE * 0.68 + drift;
+  const offsetY = (hash2(cx, cy, 950 + salt) - 0.5) * FOG_CELL_SIZE * 0.58;
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalAlpha = alpha;
+  ctx.filter = `brightness(${lerp(1, 0.38, night)}) saturate(${lerp(1, 0.72, night)})`;
+  ctx.drawImage(
+    asset.image,
+    screenX + FOG_CELL_SIZE / 2 - width / 2 + offsetX,
+    screenY + FOG_CELL_SIZE / 2 - height / 2 + offsetY,
+    width,
+    height
+  );
+  ctx.restore();
+}
+
+function fogEdgeStrength(cx, cy) {
+  if (isFogRevealedCell(cx, cy)) return 0;
+  let strength = 0;
+  for (let y = -2; y <= 2; y += 1) {
+    for (let x = -2; x <= 2; x += 1) {
+      if (x === 0 && y === 0) continue;
+      const distance = Math.hypot(x, y);
+      if (distance > 2.25 || !isFogRevealedCell(cx + x, cy + y)) continue;
+      strength = Math.max(strength, distance <= 1.1 ? 1 : 0.56);
+    }
+  }
+  return strength;
 }
 
 function dayProgress() {
@@ -880,6 +997,7 @@ function saveProgress() {
       nextCrate: world.nextCrate,
       nextDropId: world.nextDropId
     },
+    fog: Array.from(revealedFog),
     tech: Object.fromEntries(Object.entries(tech).map(([key, item]) => [key, item.level])),
     zombies: zombies.slice(0, 70).map((zombie) => ({
       x: zombie.x,
@@ -956,6 +1074,11 @@ function loadProgress() {
     world.nextSpawn = Number(data.world?.nextSpawn) || 0;
     world.nextCrate = Number(data.world?.nextCrate) || 0;
     world.nextDropId = Number(data.world?.nextDropId) || 1;
+    revealedFog.clear();
+    (Array.isArray(data.fog) ? data.fog : []).forEach((key) => {
+      if (typeof key === "string") revealedFog.add(key);
+    });
+    updateFogOfWar();
     bullets.length = 0;
     particles.length = 0;
     zombies.length = 0;
@@ -1000,6 +1123,7 @@ function clearProgress() {
   player.weaponIndex = 0;
   player.character = validCharacter(selectedCharacter);
   player.flashlight = false;
+  revealedFog.clear();
   world.time = DAY_LENGTH * 0.35;
   world.nextSpawn = 0;
   world.nextCrate = 0;
@@ -1057,6 +1181,7 @@ function restartRun(showMessage = true) {
   player.invulnerable = 1;
   player.shotTimer = 0;
   player.flashlight = false;
+  updateFogOfWar();
   world.state = "playing";
   bullets.length = 0;
   zombies.length = 0;
@@ -1195,6 +1320,7 @@ function update(dt) {
   updateParticles(dt);
   updateCratesAndDrops(dt);
   updateSpawns(dt);
+  updateFogOfWar();
   updateCamera(dt);
   updateHud();
 }
@@ -1460,6 +1586,7 @@ function draw() {
   drawPlayer();
   drawParticles();
   drawLighting();
+  drawFogOfWar();
   drawPrompt();
   drawMinimap();
 }
@@ -2299,6 +2426,46 @@ function drawLighting() {
   }
 }
 
+function drawFogOfWar() {
+  const view = viewportBounds(FOG_CELL_SIZE * 3);
+  const startX = Math.floor(view.left / FOG_CELL_SIZE);
+  const endX = Math.floor(view.right / FOG_CELL_SIZE);
+  const startY = Math.floor(view.top / FOG_CELL_SIZE);
+  const endY = Math.floor(view.bottom / FOG_CELL_SIZE);
+  const night = nightAmount();
+
+  fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+  fogCtx.globalCompositeOperation = "source-over";
+  fogCtx.fillStyle = fogColor([244, 248, 240], [12, 16, 25], night, 0.94);
+  fogCtx.fillRect(0, 0, fogCanvas.width, fogCanvas.height);
+
+  fogCtx.globalCompositeOperation = "destination-out";
+  for (let cy = startY; cy <= endY; cy += 1) {
+    for (let cx = startX; cx <= endX; cx += 1) {
+      if (!isFogRevealedCell(cx, cy)) continue;
+      const screen = worldToScreen(cx * FOG_CELL_SIZE + FOG_CELL_SIZE / 2, cy * FOG_CELL_SIZE + FOG_CELL_SIZE / 2);
+      cutFogHole(screen.x, screen.y, FOG_CELL_SIZE * 0.78, FOG_CELL_SIZE * 0.42);
+    }
+  }
+  fogCtx.globalCompositeOperation = "source-over";
+  ctx.drawImage(fogCanvas, 0, 0);
+
+  ctx.save();
+  for (let cy = startY - 1; cy <= endY + 1; cy += 1) {
+    for (let cx = startX - 1; cx <= endX + 1; cx += 1) {
+      const edge = fogEdgeStrength(cx, cy);
+      if (edge <= 0) continue;
+      const screen = worldToScreen(cx * FOG_CELL_SIZE, cy * FOG_CELL_SIZE);
+      drawFogCloud(cx, cy, screen.x, screen.y, (0.78 + night * 0.08) * edge, night, 0);
+      drawFogCloud(cx, cy, screen.x, screen.y, (0.54 + night * 0.08) * edge, night, 23);
+      if (hash2(cx, cy, 981) > 0.45) {
+        drawFogCloud(cx, cy, screen.x, screen.y, (0.38 + night * 0.06) * edge, night, 47);
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function drawPrompt() {
   if (!world.lootPrompt) return;
   const s = worldToScreen(world.lootPrompt.x, world.lootPrompt.y);
@@ -2316,34 +2483,82 @@ function drawMinimap() {
   const size = 132;
   const x = 18;
   const y = window.innerHeight - size - 18;
-  const radius = exploredRadius();
+  let radius = exploredRadius();
+  for (const key of revealedFog) {
+    const parts = key.split(",");
+    if (parts.length !== 2) continue;
+    const cx = Number(parts[0]);
+    const cy = Number(parts[1]);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+    radius = Math.max(
+      radius,
+      dist(0, 0, cx * FOG_CELL_SIZE + FOG_CELL_SIZE / 2, cy * FOG_CELL_SIZE + FOG_CELL_SIZE / 2) + FOG_CELL_SIZE
+    );
+  }
+  const centerX = x + size / 2;
+  const centerY = y + size / 2;
+  const mapRadius = size / 2 - 12;
+  const worldToMini = (worldX, worldY) => ({
+    x: centerX + (worldX / radius) * mapRadius,
+    y: centerY + (worldY / radius) * mapRadius
+  });
   ctx.fillStyle = "rgba(14, 18, 18, 0.78)";
   drawScreenRoundRect(x, y, size, size, 8);
   ctx.fill();
   ctx.strokeStyle = "rgba(237, 242, 223, 0.18)";
   drawScreenRoundRect(x, y, size, size, 8);
   ctx.stroke();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, mapRadius, 0, Math.PI * 2);
+  ctx.clip();
+  for (const key of revealedFog) {
+    const parts = key.split(",");
+    if (parts.length !== 2) continue;
+    const cx = Number(parts[0]);
+    const cy = Number(parts[1]);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+
+    const worldX = cx * FOG_CELL_SIZE;
+    const worldY = cy * FOG_CELL_SIZE;
+    const cellCenterX = worldX + FOG_CELL_SIZE / 2;
+    const cellCenterY = worldY + FOG_CELL_SIZE / 2;
+    if (dist(0, 0, cellCenterX, cellCenterY) > radius + FOG_CELL_SIZE) continue;
+
+    const topLeft = worldToMini(worldX, worldY);
+    const bottomRight = worldToMini(worldX + FOG_CELL_SIZE, worldY + FOG_CELL_SIZE);
+    ctx.fillStyle = isCurrentlyVisibleAt(cellCenterX, cellCenterY) ? "rgba(132, 169, 78, 0.48)" : "rgba(96, 128, 86, 0.26)";
+    ctx.fillRect(
+      Math.floor(topLeft.x),
+      Math.floor(topLeft.y),
+      Math.max(1, Math.ceil(bottomRight.x - topLeft.x)),
+      Math.max(1, Math.ceil(bottomRight.y - topLeft.y))
+    );
+  }
+  ctx.restore();
+
   ctx.strokeStyle = "rgba(237, 242, 223, 0.16)";
   ctx.beginPath();
-  ctx.arc(x + size / 2, y + size / 2, size / 2 - 12, 0, Math.PI * 2);
+  ctx.arc(centerX, centerY, mapRadius, 0, Math.PI * 2);
   ctx.stroke();
   ctx.fillStyle = "#5b93a8";
-  ctx.fillRect(
-    x + size / 2 + (player.x / radius) * (size / 2 - 12) - 3,
-    y + size / 2 + (player.y / radius) * (size / 2 - 12) - 3,
-    6,
-    6
-  );
+  const playerMini = worldToMini(player.x, player.y);
+  ctx.fillRect(Math.floor(playerMini.x - 3), Math.floor(playerMini.y - 3), 6, 6);
   ctx.fillStyle = "#5aa06a";
   for (const zone of safeZones) {
-    const zx = x + size / 2 + (zone.x / radius) * (size / 2 - 12);
-    const zy = y + size / 2 + (zone.y / radius) * (size / 2 - 12);
+    if (!isFogRevealedAt(zone.x, zone.y)) continue;
+    const zoneMini = worldToMini(zone.x, zone.y);
+    const zx = zoneMini.x;
+    const zy = zoneMini.y;
     if (zx < x + 4 || zx > x + size - 4 || zy < y + 4 || zy > y + size - 4) continue;
     ctx.fillRect(Math.floor(zx - 3), Math.floor(zy - 3), 6, 6);
   }
   for (const zombie of zombies) {
-    const zx = x + size / 2 + (zombie.x / radius) * (size / 2 - 12);
-    const zy = y + size / 2 + (zombie.y / radius) * (size / 2 - 12);
+    if (!isFogRevealedAt(zombie.x, zombie.y) || !isCurrentlyVisibleAt(zombie.x, zombie.y)) continue;
+    const zombieMini = worldToMini(zombie.x, zombie.y);
+    const zx = zombieMini.x;
+    const zy = zombieMini.y;
     if (zx < x + 4 || zx > x + size - 4 || zy < y + 4 || zy > y + size - 4) continue;
     ctx.fillStyle = zombie.aggro ? "#dc5148" : "#7aa354";
     ctx.fillRect(Math.floor(zx - 2), Math.floor(zy - 2), 4, 4);
