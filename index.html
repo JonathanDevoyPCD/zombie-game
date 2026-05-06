@@ -29,7 +29,7 @@
       </div>
     </div>
 
-    <aside class="panel" id="upgradePanel">
+    <aside class="panel collapsed" id="upgradePanel">
       <header>
         <div>
           <span>Field Base</span>
@@ -39,12 +39,25 @@
       </header>
       <div class="base-stats">
         <span id="levelText">Level 1</span>
-        <span id="distanceText">Range 0m</span>
+        <span id="distanceText">Open map</span>
       </div>
       <div class="upgrade-list" id="upgradeList"></div>
     </aside>
 
     <div class="toast" id="toast"></div>
+
+    <div class="admin-menu" id="adminMenu" hidden>
+      <header>
+        <span>Admin</span>
+        <strong>Time Controls</strong>
+      </header>
+      <div class="admin-actions">
+        <button type="button" data-time="morning">Morning</button>
+        <button type="button" data-time="midday">Midday</button>
+        <button type="button" data-time="evening">Evening</button>
+        <button type="button" data-time="midnight">Midnight</button>
+      </div>
+    </div>
 
     <div class="menu-screen" id="mainMenu">
       <div class="menu-card">
