@@ -23,6 +23,9 @@ const ui = {
   panelToggle: document.getElementById("panelToggle"),
   levelText: document.getElementById("levelText"),
   distanceText: document.getElementById("distanceText"),
+  questTitle: document.getElementById("questTitle"),
+  questText: document.getElementById("questText"),
+  baseUpgradeButton: document.getElementById("baseUpgradeButton"),
   toast: document.getElementById("toast"),
   adminMenu: document.getElementById("adminMenu"),
   adminTimeButtons: document.querySelectorAll("[data-time]"),
@@ -53,9 +56,11 @@ const camera = { x: 0, y: 0 };
 const bullets = [];
 const zombies = [];
 const crates = [];
+const structures = [];
 const particles = [];
 const drops = [];
 const revealedFog = new Set();
+const generatedStructureIds = new Set();
 
 const FRAME_SIZE = 128;
 const SUMMER_GROUND_TILE_SIZE = 192;
@@ -68,6 +73,14 @@ const terrainAssets = {
   ground: createTerrainAssetList(56, (index) => `sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Ground ${String(index).padStart(2, "0")}.png`),
   tent: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tent.png"),
   campfire: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Campfire.png"),
+  house: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - House.png"),
+  windmill: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Windmill.png"),
+  well: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Well.png"),
+  chest: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Treasure Chest.png"),
+  barrel: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Barrel.png"),
+  watchtower: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Watchtower Short.png"),
+  fenceHorizontal: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Fence Horizontal.png"),
+  fenceVertical: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Fence Vertical.png"),
   grass: createTerrainAssetList(20, (index) => `sprites/TerrainOptimized/Grass/Grass-${String(index).padStart(2, "0")}.png`),
   rocks: createTerrainAssetList(40, (index) => `sprites/TerrainOptimized/Rocks/stone grass-${String(index).padStart(2, "0")}.png`),
   clouds: createTerrainAssetList(41, (index) => `sprites/Clouds/Asset ${index}.png`)
@@ -204,6 +217,8 @@ const player = {
   maxStamina: 100,
   speed: 190,
   scrap: 0,
+  wood: 0,
+  parts: 0,
   xp: 0,
   level: 1,
   weaponIndex: 0,
@@ -229,6 +244,8 @@ const world = {
   nextDropId: 1,
   messageTimer: 0,
   lootPrompt: null,
+  questIndex: 0,
+  baseLevel: 0,
   started: performance.now(),
   state: "menu"
 };
@@ -240,6 +257,55 @@ const safeZones = [
   { id: "ranger", name: "Ranger Cache", x: -720, y: -520, radius: 74 },
   { id: "bridge", name: "Bridge Camp", x: 180, y: 690, radius: 70 },
   { id: "checkpoint", name: "Old Checkpoint", x: 980, y: -330, radius: 78 }
+];
+
+const baseStages = [
+  { name: "Tent Camp", radius: SAFE_ZONE_RADIUS, heal: 7, armor: 9, stamina: 34, cost: null },
+  { name: "Fenced Camp", radius: 126, heal: 10, armor: 13, stamina: 42, cost: { wood: 80, scrap: 65 } },
+  { name: "Fortified Camp", radius: 166, heal: 13, armor: 18, stamina: 52, cost: { wood: 155, scrap: 120, parts: 25 } },
+  { name: "Survivor Outpost", radius: 214, heal: 17, armor: 24, stamina: 64, cost: { wood: 250, scrap: 210, parts: 65 } }
+];
+
+const structureTypes = {
+  farm: { name: "Abandoned Farm", resource: "wood", minZone: 1, color: "#9f7b43" },
+  cabin: { name: "Hunter Cabin", resource: "scrap", minZone: 1, color: "#79513a" },
+  camp: { name: "Survivor Camp", resource: "wood", minZone: 2, color: "#6f8452" },
+  depot: { name: "Supply Depot", resource: "parts", minZone: 2, color: "#646f73" },
+  clinic: { name: "Field Clinic", resource: "parts", minZone: 3, color: "#87948c" },
+  radio: { name: "Radio Tower", resource: "parts", minZone: 4, color: "#6b7385" }
+};
+
+const questDefinitions = [
+  {
+    title: "Secure the Camp",
+    text: () => `Collect 80 wood and 65 scrap, then return to base. Wood ${player.wood}/80 - Scrap ${player.scrap}/65.`,
+    done: () => isPlayerInSafeZone() && player.wood >= 80 && player.scrap >= 65
+  },
+  {
+    title: "Raise the Fence",
+    text: () => "Use the Base Upgrade button to turn the tent camp into a fenced camp.",
+    done: () => world.baseLevel >= 1
+  },
+  {
+    title: "Scout a Farm",
+    text: () => "Find and enter an abandoned farm beyond the first fog line.",
+    done: () => structures.some((structure) => structure.discovered && structure.type === "farm" && structure.zone >= 2)
+  },
+  {
+    title: "Recover Radio Parts",
+    text: () => `Loot depots, clinics, or towers until you have 25 parts, then return to base. Parts ${player.parts}/25.`,
+    done: () => isPlayerInSafeZone() && player.parts >= 25
+  },
+  {
+    title: "Fortify the Outpost",
+    text: () => "Upgrade the base again to expand the safe zone and improve recovery.",
+    done: () => world.baseLevel >= 2
+  },
+  {
+    title: "Write Your Route",
+    text: () => "Keep exploring. The map, camps, and loot you uncover are now your story.",
+    done: () => false
+  }
 ];
 
 function resize() {
@@ -556,8 +622,64 @@ function applyTechStats() {
   player.reserveAmmo = clamp(player.reserveAmmo, 0, player.ammoCap);
 }
 
+function applyBaseStats() {
+  const stage = baseStages[world.baseLevel] || baseStages[0];
+  safeZones[0].radius = stage.radius;
+}
+
+function resourceAmount(kind) {
+  if (kind === "ammo") return player.reserveAmmo;
+  return Number(player[kind]) || 0;
+}
+
+function addResource(kind, amount) {
+  if (kind === "ammo") {
+    player.reserveAmmo = clamp(player.reserveAmmo + amount, 0, player.ammoCap);
+    return;
+  }
+  if (kind === "med") {
+    player.hp = clamp(player.hp + amount, 0, player.maxHp);
+    return;
+  }
+  if (["scrap", "wood", "parts"].includes(kind)) {
+    player[kind] += amount;
+  }
+}
+
+function canAfford(cost) {
+  if (!cost) return false;
+  return Object.entries(cost).every(([kind, amount]) => resourceAmount(kind) >= amount);
+}
+
+function spendResources(cost) {
+  if (!canAfford(cost)) return false;
+  Object.entries(cost).forEach(([kind, amount]) => {
+    player[kind] -= amount;
+  });
+  return true;
+}
+
+function formatCost(cost) {
+  if (!cost) return "";
+  return Object.entries(cost).map(([kind, amount]) => `${amount} ${kind}`).join(", ");
+}
+
+function currentQuest() {
+  return questDefinitions[Math.min(world.questIndex, questDefinitions.length - 1)];
+}
+
+function updateQuestProgress() {
+  let advanced = false;
+  while (world.questIndex < questDefinitions.length - 1 && currentQuest().done()) {
+    world.questIndex += 1;
+    advanced = true;
+  }
+  if (advanced) flash(`Objective: ${currentQuest().title}`);
+}
+
 function rebuildUpgradePanel() {
   ui.upgradeList.innerHTML = "";
+  updateBaseUpgradeButton();
   Object.entries(tech).forEach(([key, item]) => {
     const row = document.createElement("div");
     row.className = "upgrade-card";
@@ -587,6 +709,40 @@ function rebuildUpgradePanel() {
   });
 }
 
+function updateBaseUpgradeButton() {
+  const nextStage = baseStages[world.baseLevel + 1];
+  if (!nextStage) {
+    ui.baseUpgradeButton.textContent = `${baseStages[world.baseLevel].name} - Max`;
+    ui.baseUpgradeButton.disabled = true;
+    return;
+  }
+  ui.baseUpgradeButton.textContent = `Upgrade Base: ${formatCost(nextStage.cost)}`;
+  ui.baseUpgradeButton.disabled = !canAfford(nextStage.cost) || !isPlayerInSafeZone();
+}
+
+function upgradeBase() {
+  const nextStage = baseStages[world.baseLevel + 1];
+  if (!nextStage) {
+    flash("Base fully upgraded");
+    return;
+  }
+  if (!isPlayerInSafeZone()) {
+    flash("Return to base to build");
+    return;
+  }
+  if (!spendResources(nextStage.cost)) {
+    flash(`Need ${formatCost(nextStage.cost)}`);
+    return;
+  }
+  world.baseLevel += 1;
+  applyBaseStats();
+  updateFogOfWar();
+  rebuildUpgradePanel();
+  updateQuestProgress();
+  saveProgress();
+  flash(`${nextStage.name} built`);
+}
+
 function buyUpgrade(key) {
   const item = tech[key];
   if (!item || item.level >= item.max) return;
@@ -607,6 +763,7 @@ function buyUpgrade(key) {
     syncWeaponAmmo();
   }
   rebuildUpgradePanel();
+  updateQuestProgress();
   saveProgress();
   flash(`${item.name} upgraded`);
 }
@@ -761,6 +918,85 @@ function summerGroundTile(tx, ty) {
     return { number: hash2(tx, ty, 211) > 0.52 ? 43 : 52, rotation: 0 };
   }
   return { number: 5, rotation: 0 };
+}
+
+function structureTypeForCell(gx, gy, zone) {
+  const roll = hash2(gx, gy, 520);
+  if (zone >= 4 && roll > 0.88) return "radio";
+  if (zone >= 3 && roll > 0.7) return "clinic";
+  if (zone >= 2 && roll > 0.52) return "depot";
+  if (roll > 0.36) return "camp";
+  if (roll > 0.16) return "farm";
+  return "cabin";
+}
+
+function generateStructuresAroundPlayer() {
+  const grid = 720;
+  const radius = exploredRadius() + 980;
+  const minGx = Math.floor((player.x - radius) / grid);
+  const maxGx = Math.ceil((player.x + radius) / grid);
+  const minGy = Math.floor((player.y - radius) / grid);
+  const maxGy = Math.ceil((player.y + radius) / grid);
+
+  for (let gy = minGy; gy <= maxGy; gy += 1) {
+    for (let gx = minGx; gx <= maxGx; gx += 1) {
+      const id = `${gx},${gy}`;
+      if (generatedStructureIds.has(id)) continue;
+      generatedStructureIds.add(id);
+      if (hash2(gx, gy, 500) < 0.72) continue;
+
+      const x = gx * grid + grid * (0.22 + hash2(gx, gy, 501) * 0.56);
+      const y = gy * grid + grid * (0.22 + hash2(gx, gy, 502) * 0.56);
+      const distanceFromBase = Math.hypot(x, y);
+      const zone = Math.floor(distanceFromBase / 430) + 1;
+      if (distanceFromBase < 520 || isInAnySafeZone(x, y, 240) || !canStandAt(x, y)) continue;
+
+      structures.push({
+        id,
+        x,
+        y,
+        zone,
+        type: structureTypeForCell(gx, gy, zone),
+        discovered: false,
+        looted: false,
+        wobble: hash2(gx, gy, 503) * 10
+      });
+    }
+  }
+}
+
+function structureRewards(structure) {
+  const zoneBoost = Math.max(1, structure.zone);
+  const table = {
+    farm: { wood: Math.round(rand(34, 58) * zoneBoost), scrap: Math.round(rand(6, 14) * zoneBoost) },
+    cabin: { wood: Math.round(rand(18, 34) * zoneBoost), scrap: Math.round(rand(18, 34) * zoneBoost), ammo: Math.round(rand(8, 20)) },
+    camp: { wood: Math.round(rand(28, 46) * zoneBoost), scrap: Math.round(rand(18, 30) * zoneBoost), ammo: Math.round(rand(12, 28)) },
+    depot: { scrap: Math.round(rand(28, 48) * zoneBoost), parts: Math.round(rand(8, 16) * zoneBoost), ammo: Math.round(rand(16, 34)) },
+    clinic: { parts: Math.round(rand(10, 20) * zoneBoost), med: 42, scrap: Math.round(rand(14, 26) * zoneBoost) },
+    radio: { parts: Math.round(rand(18, 32) * zoneBoost), scrap: Math.round(rand(24, 42) * zoneBoost) }
+  };
+  return table[structure.type] || table.cabin;
+}
+
+function describeRewards(rewards) {
+  return Object.entries(rewards)
+    .filter(([, amount]) => amount > 0)
+    .map(([kind, amount]) => kind === "med" ? "patched wounds" : `${amount} ${kind}`)
+    .join(", ");
+}
+
+function lootStructure(structure) {
+  if (!structure || structure.looted) return false;
+  structure.discovered = true;
+  structure.looted = true;
+  const rewards = structureRewards(structure);
+  Object.entries(rewards).forEach(([kind, amount]) => addResource(kind, amount));
+  addHitParticles(structure.x, structure.y, "#d8b75f", 14);
+  flash(`${structureTypes[structure.type].name}: ${describeRewards(rewards)}`);
+  rebuildUpgradePanel();
+  updateQuestProgress();
+  saveProgress();
+  return true;
 }
 
 function spawnCrate() {
@@ -932,15 +1168,27 @@ function lootNearby() {
     found.looted = true;
     const scrap = Math.round(rand(18, 34) * found.zone);
     const ammo = Math.round(rand(8, 18) + found.zone * 4);
+    const wood = Math.random() > 0.45 ? Math.round(rand(10, 24) * found.zone) : 0;
+    const parts = found.zone >= 2 && Math.random() > 0.7 ? Math.round(rand(3, 8) * found.zone) : 0;
     const med = Math.random() > 0.64;
     player.scrap += scrap;
+    player.wood += wood;
+    player.parts += parts;
     player.reserveAmmo = clamp(player.reserveAmmo + ammo, 0, player.ammoCap);
     if (med) player.hp = clamp(player.hp + 28, 0, player.maxHp);
     addHitParticles(found.x, found.y, "#d8b75f", 10);
-    flash(`Looted ${scrap} scrap and ${ammo} ammo${med ? ", patched wounds" : ""}`);
+    flash(`Looted ${scrap} scrap, ${ammo} ammo${wood ? `, ${wood} wood` : ""}${parts ? `, ${parts} parts` : ""}${med ? ", patched wounds" : ""}`);
     rebuildUpgradePanel();
+    updateQuestProgress();
     saveProgress();
     return;
+  }
+
+  for (const structure of structures) {
+    if (!structure.looted && dist(player.x, player.y, structure.x, structure.y) < 78) {
+      lootStructure(structure);
+      return;
+    }
   }
 
   for (let i = drops.length - 1; i >= 0; i -= 1) {
@@ -954,10 +1202,10 @@ function lootNearby() {
 
 function collectDrop(index) {
   const drop = drops[index];
-  if (drop.kind === "scrap") player.scrap += drop.amount;
-  if (drop.kind === "ammo") player.reserveAmmo = clamp(player.reserveAmmo + drop.amount, 0, player.ammoCap);
+  addResource(drop.kind, drop.amount);
   drops.splice(index, 1);
   rebuildUpgradePanel();
+  updateQuestProgress();
   saveProgress();
 }
 
@@ -977,6 +1225,8 @@ function gainXp(amount) {
 function saveProgress() {
   const data = {
     scrap: player.scrap,
+    wood: player.wood,
+    parts: player.parts,
     xp: player.xp,
     level: player.level,
     weaponIndex: player.weaponIndex,
@@ -995,7 +1245,9 @@ function saveProgress() {
       time: world.time,
       nextSpawn: world.nextSpawn,
       nextCrate: world.nextCrate,
-      nextDropId: world.nextDropId
+      nextDropId: world.nextDropId,
+      questIndex: world.questIndex,
+      baseLevel: world.baseLevel
     },
     fog: Array.from(revealedFog),
     tech: Object.fromEntries(Object.entries(tech).map(([key, item]) => [key, item.level])),
@@ -1027,7 +1279,18 @@ function saveProgress() {
       looted: crate.looted,
       wobble: crate.wobble
     })),
+    structures: structures.map((structure) => ({
+      id: structure.id,
+      x: structure.x,
+      y: structure.y,
+      zone: structure.zone,
+      type: structure.type,
+      discovered: structure.discovered,
+      looted: structure.looted,
+      wobble: structure.wobble
+    })),
     drops: drops.map((drop) => ({
+      id: drop.id,
       x: drop.x,
       y: drop.y,
       kind: drop.kind,
@@ -1046,6 +1309,8 @@ function loadProgress() {
     if (!raw) return false;
     const data = JSON.parse(raw);
     player.scrap = Number(data.scrap) || 0;
+    player.wood = Number(data.wood) || 0;
+    player.parts = Number(data.parts) || 0;
     player.xp = Number(data.xp) || 0;
     player.level = Number(data.level) || 1;
     Object.entries(data.tech || {}).forEach(([key, level]) => {
@@ -1074,6 +1339,9 @@ function loadProgress() {
     world.nextSpawn = Number(data.world?.nextSpawn) || 0;
     world.nextCrate = Number(data.world?.nextCrate) || 0;
     world.nextDropId = Number(data.world?.nextDropId) || 1;
+    world.questIndex = clamp(Number(data.world?.questIndex) || 0, 0, questDefinitions.length - 1);
+    world.baseLevel = clamp(Number(data.world?.baseLevel) || 0, 0, baseStages.length - 1);
+    applyBaseStats();
     revealedFog.clear();
     (Array.isArray(data.fog) ? data.fog : []).forEach((key) => {
       if (typeof key === "string") revealedFog.add(key);
@@ -1083,6 +1351,8 @@ function loadProgress() {
     particles.length = 0;
     zombies.length = 0;
     crates.length = 0;
+    structures.length = 0;
+    generatedStructureIds.clear();
     drops.length = 0;
     (data.zombies || []).forEach((zombie) => zombies.push({
       ...zombie,
@@ -1095,7 +1365,21 @@ function loadProgress() {
       detectRange: Number(zombie.detectRange) || 225
     }));
     (data.crates || []).forEach((crate) => crates.push(crate));
-    (data.drops || []).forEach((drop) => drops.push(drop));
+    (data.structures || []).forEach((structure) => {
+      if (!structure.id) return;
+      generatedStructureIds.add(structure.id);
+      structures.push({
+        ...structure,
+        type: structureTypes[structure.type] ? structure.type : "cabin",
+        discovered: Boolean(structure.discovered),
+        looted: Boolean(structure.looted)
+      });
+    });
+    (data.drops || []).forEach((drop) => drops.push({
+      ...drop,
+      id: Number(drop.id) || world.nextDropId++
+    }));
+    generateStructuresAroundPlayer();
     ensureWorldPopulated();
     rebuildUpgradePanel();
     updateHud();
@@ -1118,22 +1402,30 @@ function clearProgress() {
     item.level = 0;
   });
   player.scrap = 0;
+  player.wood = 0;
+  player.parts = 0;
   player.xp = 0;
   player.level = 1;
   player.weaponIndex = 0;
   player.character = validCharacter(selectedCharacter);
   player.flashlight = false;
   revealedFog.clear();
+  structures.length = 0;
+  generatedStructureIds.clear();
+  world.questIndex = 0;
+  world.baseLevel = 0;
   world.time = DAY_LENGTH * 0.35;
   world.nextSpawn = 0;
   world.nextCrate = 0;
   world.nextDropId = 1;
+  applyBaseStats();
   applyTechStats();
   restartRun(false);
   updateMenuButtons();
 }
 
 function ensureWorldPopulated() {
+  generateStructuresAroundPlayer();
   while (crates.filter((crate) => !crate.looted).length < 8) spawnCrate();
   while (zombies.length < 7) spawnZombie();
 }
@@ -1321,6 +1613,7 @@ function update(dt) {
   updateCratesAndDrops(dt);
   updateSpawns(dt);
   updateFogOfWar();
+  updateQuestProgress();
   updateCamera(dt);
   updateHud();
 }
@@ -1368,9 +1661,10 @@ function updatePlayer(dt) {
 
   const safeZone = getSafeZoneAt(player.x, player.y);
   if (safeZone) {
-    player.hp = clamp(player.hp + 7 * dt, 0, player.maxHp);
-    player.armor = clamp(player.armor + 9 * dt, 0, player.maxArmor);
-    player.stamina = clamp(player.stamina + 34 * dt, 0, player.maxStamina);
+    const stage = safeZone.id === "base" ? baseStages[world.baseLevel] : baseStages[0];
+    player.hp = clamp(player.hp + stage.heal * dt, 0, player.maxHp);
+    player.armor = clamp(player.armor + stage.armor * dt, 0, player.maxArmor);
+    player.stamina = clamp(player.stamina + stage.stamina * dt, 0, player.maxStamina);
   }
 
   player.invulnerable = Math.max(0, player.invulnerable - dt);
@@ -1413,7 +1707,9 @@ function updateBullets(dt) {
             player.scrap += Math.round(value * rand(0.7, 1.15));
             gainXp(value);
             if (Math.random() > 0.74) {
-              spawnDrop(zombie.x, zombie.y, Math.random() > 0.5 ? "ammo" : "scrap", Math.round(rand(5, 14)));
+              const dropRoll = Math.random();
+              const kind = dropRoll > 0.82 ? "parts" : dropRoll > 0.58 ? "wood" : dropRoll > 0.3 ? "ammo" : "scrap";
+              spawnDrop(zombie.x, zombie.y, kind, Math.round(kind === "parts" ? rand(2, 6) : rand(5, 14)));
             }
             addHitParticles(zombie.x, zombie.y, "#5f8f45", 12);
             zombies.splice(j, 1);
@@ -1511,10 +1807,26 @@ function updateCratesAndDrops(dt) {
   }
 
   world.lootPrompt = null;
+  for (const structure of structures) {
+    if (!structure.discovered && dist(player.x, player.y, structure.x, structure.y) < 190) {
+      structure.discovered = true;
+      flash(`Discovered ${structureTypes[structure.type].name}`);
+      updateQuestProgress();
+      saveProgress();
+    }
+  }
   for (const crate of crates) {
     if (!crate.looted && dist(player.x, player.y, crate.x, crate.y) < 54) {
       world.lootPrompt = { x: crate.x, y: crate.y - 34, label: "E" };
       break;
+    }
+  }
+  if (!world.lootPrompt) {
+    for (const structure of structures) {
+      if (!structure.looted && dist(player.x, player.y, structure.x, structure.y) < 78) {
+        world.lootPrompt = { x: structure.x, y: structure.y - 58, label: "E" };
+        break;
+      }
     }
   }
   if (!world.lootPrompt) {
@@ -1538,6 +1850,7 @@ function updateParticles(dt) {
 }
 
 function updateSpawns(dt) {
+  generateStructuresAroundPlayer();
   const zone = currentZone();
   const pressure = Math.min(1.2, world.time / 240);
   const targetPopulation = 7 + zone * 3;
@@ -1568,16 +1881,20 @@ function updateHud() {
   ui.armorText.textContent = `${armor} / ${player.maxArmor}`;
   ui.weaponText.textContent = player.reloading > 0 ? "Reloading" : weapons[player.weaponIndex].name;
   ui.ammoText.textContent = `${player.ammo} / ${player.reserveAmmo}`;
-  ui.scrapText.textContent = `${player.scrap} scrap`;
+  ui.scrapText.textContent = `${player.scrap} scrap | ${player.wood} wood | ${player.parts} parts`;
   ui.runStatus.textContent = `${timeOfDayLabel()} - Zone ${currentZone()} - ${Math.round(Math.hypot(player.x, player.y))}m`;
   ui.levelText.textContent = `Level ${player.level} - ${player.xp}/${player.level * 60} XP`;
-  ui.distanceText.textContent = "Open map";
+  ui.distanceText.textContent = baseStages[world.baseLevel].name;
+  ui.questTitle.textContent = currentQuest().title;
+  ui.questText.textContent = currentQuest().text();
+  updateBaseUpgradeButton();
 }
 
 function draw() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGround();
   drawSceneryProps();
+  drawStructures();
   drawBase();
   drawCrates();
   drawDrops();
@@ -1961,6 +2278,22 @@ function drawTerrainAsset(kind, worldX, worldY, scale, salt, alpha = 1) {
   return true;
 }
 
+function drawPropImage(kind, worldX, worldY, width, alpha = 1, flip = false) {
+  const asset = terrainAssets[kind]?.[0];
+  if (!asset?.loaded) return false;
+  const screen = worldToScreen(worldX, worldY);
+  const height = (asset.image.height / asset.image.width) * width;
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalAlpha = alpha;
+  ctx.translate(screen.x, screen.y);
+  if (flip) ctx.scale(-1, 1);
+  ctx.drawImage(asset.image, -width / 2, -height / 2, width, height);
+  ctx.restore();
+  ctx.imageSmoothingEnabled = false;
+  return true;
+}
+
 function drawSceneryProps() {
   const tile = 128;
   const startX = Math.floor((camera.x - window.innerWidth / 2) / tile) * tile;
@@ -1991,6 +2324,86 @@ function drawSceneryProps() {
       } else if (terrain === "dry" && h > 0.52) {
         drawTerrainAsset("grass", propX, propY + 18, 0.18 + h * 0.12, 27, 0.72);
       }
+    }
+  }
+}
+
+function drawStructureFallback(structure, screen) {
+  const color = structureTypes[structure.type].color;
+  ctx.save();
+  ctx.fillStyle = "rgba(0, 0, 0, 0.24)";
+  ctx.beginPath();
+  ctx.ellipse(screen.x, screen.y + 28, 54, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.floor(screen.x - 34), Math.floor(screen.y - 34), 68, 54);
+  ctx.fillStyle = "#4f3929";
+  ctx.beginPath();
+  ctx.moveTo(screen.x - 42, screen.y - 32);
+  ctx.lineTo(screen.x, screen.y - 66);
+  ctx.lineTo(screen.x + 42, screen.y - 32);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#201b18";
+  ctx.fillRect(Math.floor(screen.x - 7), Math.floor(screen.y - 4), 14, 24);
+  ctx.restore();
+}
+
+function drawStructureDetails(structure) {
+  const flip = hash2(structure.x, structure.y, 580) > 0.5;
+  const alpha = structure.looted ? 0.62 : 1;
+  if (structure.type === "farm") {
+    drawPropImage("house", structure.x, structure.y - 8, 120, alpha, flip) || drawStructureFallback(structure, worldToScreen(structure.x, structure.y));
+    drawPropImage("windmill", structure.x + 96, structure.y - 22, 92, alpha);
+    drawPropImage("well", structure.x - 74, structure.y + 42, 54, alpha);
+  } else if (structure.type === "camp") {
+    drawPropImage("tent", structure.x - 34, structure.y - 6, 82, alpha);
+    drawPropImage("tent", structure.x + 42, structure.y + 18, 72, alpha, true);
+    drawPropImage("barrel", structure.x + 84, structure.y + 54, 34, alpha);
+  } else if (structure.type === "depot") {
+    drawPropImage("house", structure.x, structure.y - 6, 104, alpha) || drawStructureFallback(structure, worldToScreen(structure.x, structure.y));
+    drawPropImage("barrel", structure.x - 58, structure.y + 44, 38, alpha);
+    drawPropImage("chest", structure.x + 62, structure.y + 46, 44, alpha);
+  } else if (structure.type === "clinic") {
+    drawPropImage("house", structure.x, structure.y - 6, 112, alpha) || drawStructureFallback(structure, worldToScreen(structure.x, structure.y));
+    const s = worldToScreen(structure.x, structure.y - 66);
+    ctx.fillStyle = "#dfe8dc";
+    ctx.fillRect(Math.floor(s.x - 10), Math.floor(s.y - 3), 20, 6);
+    ctx.fillRect(Math.floor(s.x - 3), Math.floor(s.y - 10), 6, 20);
+  } else if (structure.type === "radio") {
+    drawPropImage("watchtower", structure.x, structure.y - 18, 112, alpha) || drawStructureFallback(structure, worldToScreen(structure.x, structure.y));
+    const s = worldToScreen(structure.x + 40, structure.y - 86);
+    ctx.strokeStyle = "#b7c4bd";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y + 74);
+    ctx.lineTo(s.x, s.y - 18);
+    ctx.moveTo(s.x - 23, s.y + 8);
+    ctx.lineTo(s.x, s.y - 18);
+    ctx.lineTo(s.x + 23, s.y + 8);
+    ctx.stroke();
+  } else {
+    drawPropImage("house", structure.x, structure.y - 4, 98, alpha, flip) || drawStructureFallback(structure, worldToScreen(structure.x, structure.y));
+  }
+}
+
+function drawStructures() {
+  const view = viewportBounds(220);
+  for (const structure of structures) {
+    if (structure.x < view.left || structure.x > view.right || structure.y < view.top || structure.y > view.bottom) continue;
+    const s = worldToScreen(structure.x, structure.y);
+    const radius = structure.type === "farm" ? 118 : 86;
+    ctx.save();
+    ctx.fillStyle = structure.looted ? "rgba(122, 104, 76, 0.2)" : "rgba(216, 183, 95, 0.18)";
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y + 18, radius, radius * 0.52, -0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    drawStructureDetails(structure);
+    if (!structure.looted) {
+      const marker = worldToScreen(structure.x, structure.y - 78);
+      ctx.fillStyle = structure.discovered ? "#d8b75f" : "rgba(237, 242, 223, 0.65)";
+      ctx.fillRect(Math.floor(marker.x - 3), Math.floor(marker.y - 3), 6, 6);
     }
   }
 }
@@ -2106,6 +2519,8 @@ function drawBase() {
 function drawSafeZoneCamp(zone) {
   const base = worldToScreen(zone.x, zone.y);
   const campfireScreen = worldToScreen(zone.x + 42, zone.y + 30);
+  const isMainBase = zone.id === "base";
+  const stage = isMainBase ? world.baseLevel : 0;
   ctx.save();
   ctx.strokeStyle = "rgba(90, 160, 106, 0.34)";
   ctx.setLineDash([8, 8]);
@@ -2115,16 +2530,32 @@ function drawSafeZoneCamp(zone) {
   ctx.stroke();
   ctx.restore();
 
+  if (isMainBase && stage >= 1) {
+    const fenceRadius = zone.radius - 10;
+    const segments = stage >= 3 ? 20 : 14;
+    for (let i = 0; i < segments; i += 1) {
+      const angle = (i / segments) * Math.PI * 2;
+      const fx = zone.x + Math.cos(angle) * fenceRadius;
+      const fy = zone.y + Math.sin(angle) * fenceRadius * 0.74;
+      const kind = Math.abs(Math.cos(angle)) > Math.abs(Math.sin(angle)) ? "fenceVertical" : "fenceHorizontal";
+      drawPropImage(kind, fx, fy, 46, 0.98, Math.cos(angle) < 0);
+    }
+  }
+
   const tent = terrainAssets.tent[0];
   if (tent?.loaded) {
-    const width = 112;
-    const height = (tent.image.height / tent.image.width) * width;
-    ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(tent.image, base.x - width / 2, base.y - height / 2 + 3, width, height);
+    drawPropImage("tent", zone.x, zone.y, 112);
+    if (isMainBase && stage >= 2) {
+      drawPropImage("tent", zone.x - 72, zone.y + 52, 86, 1, true);
+      drawPropImage("tent", zone.x + 92, zone.y - 26, 82);
+      drawPropImage("barrel", zone.x - 8, zone.y + 82, 34);
+    }
+    if (isMainBase && stage >= 3) {
+      drawPropImage("watchtower", zone.x - zone.radius + 34, zone.y - 22, 74);
+      drawPropImage("watchtower", zone.x + zone.radius - 34, zone.y - 22, 74, 1, true);
+      drawPropImage("chest", zone.x + 64, zone.y + 78, 44);
+    }
     drawCampfireSprite(campfireScreen.x, campfireScreen.y);
-    ctx.restore();
-    ctx.imageSmoothingEnabled = false;
     return;
   }
 
@@ -2181,13 +2612,55 @@ function drawCrates() {
   }
 }
 
+function drawLootIcon(kind, x, y, size = 1) {
+  ctx.save();
+  ctx.translate(Math.floor(x), Math.floor(y));
+  ctx.scale(size, size);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.24)";
+  ctx.fillRect(-10, 8, 20, 4);
+  if (kind === "ammo") {
+    ctx.fillStyle = "#d8b75f";
+    ctx.fillRect(-9, -8, 5, 15);
+    ctx.fillRect(-2, -8, 5, 15);
+    ctx.fillRect(5, -8, 5, 15);
+    ctx.fillStyle = "#f5dda3";
+    ctx.fillRect(-9, -10, 5, 3);
+    ctx.fillRect(-2, -10, 5, 3);
+    ctx.fillRect(5, -10, 5, 3);
+  } else if (kind === "wood") {
+    ctx.fillStyle = "#8b5a32";
+    ctx.fillRect(-12, -5, 20, 6);
+    ctx.fillRect(-7, 2, 20, 6);
+    ctx.fillStyle = "#c08a4a";
+    ctx.fillRect(-10, -4, 4, 4);
+    ctx.fillRect(8, 3, 4, 4);
+  } else if (kind === "parts") {
+    ctx.fillStyle = "#b8c0ba";
+    ctx.fillRect(-8, -8, 16, 16);
+    ctx.fillStyle = "#445055";
+    ctx.fillRect(-3, -3, 6, 6);
+    ctx.fillRect(-12, -2, 24, 4);
+    ctx.fillRect(-2, -12, 4, 24);
+  } else if (kind === "med") {
+    ctx.fillStyle = "#dfe8dc";
+    ctx.fillRect(-10, -8, 20, 16);
+    ctx.fillStyle = "#dc5148";
+    ctx.fillRect(-7, -2, 14, 4);
+    ctx.fillRect(-2, -7, 4, 14);
+  } else {
+    ctx.fillStyle = "#aeb8a6";
+    ctx.fillRect(-8, -8, 16, 16);
+    ctx.fillStyle = "#778077";
+    ctx.fillRect(-4, -4, 8, 8);
+  }
+  ctx.restore();
+}
+
 function drawDrops() {
   for (const drop of drops) {
     const s = worldToScreen(drop.x, drop.y);
-    ctx.fillStyle = drop.kind === "ammo" ? "#d8b75f" : "#aeb8a6";
-    ctx.fillRect(Math.floor(s.x - 6), Math.floor(s.y - 6), 12, 12);
-    ctx.fillStyle = "#111515";
-    ctx.fillRect(Math.floor(s.x - 2), Math.floor(s.y - 6), 4, 12);
+    const pulse = 1 + Math.sin(world.time * 6 + drop.id) * 0.05;
+    drawLootIcon(drop.kind, s.x, s.y, pulse);
   }
 }
 
@@ -2554,6 +3027,15 @@ function drawMinimap() {
     if (zx < x + 4 || zx > x + size - 4 || zy < y + 4 || zy > y + size - 4) continue;
     ctx.fillRect(Math.floor(zx - 3), Math.floor(zy - 3), 6, 6);
   }
+  for (const structure of structures) {
+    if (!structure.discovered || !isFogRevealedAt(structure.x, structure.y)) continue;
+    const structureMini = worldToMini(structure.x, structure.y);
+    const sx = structureMini.x;
+    const sy = structureMini.y;
+    if (sx < x + 4 || sx > x + size - 4 || sy < y + 4 || sy > y + size - 4) continue;
+    ctx.fillStyle = structure.looted ? "rgba(216, 183, 95, 0.46)" : "#d8b75f";
+    ctx.fillRect(Math.floor(sx - 2), Math.floor(sy - 2), 4, 4);
+  }
   for (const zombie of zombies) {
     if (!isFogRevealedAt(zombie.x, zombie.y) || !isCurrentlyVisibleAt(zombie.x, zombie.y)) continue;
     const zombieMini = worldToMini(zombie.x, zombie.y);
@@ -2641,6 +3123,7 @@ function initInput() {
   }, { passive: true });
 
   ui.panelToggle.addEventListener("click", () => ui.upgradePanel.classList.toggle("collapsed"));
+  ui.baseUpgradeButton.addEventListener("click", upgradeBase);
   ui.adminTimeButtons.forEach((button) => {
     button.addEventListener("click", () => setTimePreset(button.dataset.time));
   });
@@ -2676,6 +3159,7 @@ function init() {
   loadSpriteSheets();
   loadTerrainAssets();
   initInput();
+  applyBaseStats();
   applyTechStats();
   player.armor = player.maxArmor;
   player.ammo = weapons[player.weaponIndex].clip;

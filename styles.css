@@ -184,9 +184,9 @@ button:disabled {
   bottom: 208px;
   z-index: 5;
   display: grid;
-  width: 132px;
+  width: min(260px, calc(100vw - 36px));
   min-height: auto;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 92px 1fr;
   gap: 4px 8px;
   align-content: center;
   padding: 8px;
@@ -203,6 +203,7 @@ button:disabled {
 
 .inventory span:not(:first-child) {
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .panel {
@@ -253,10 +254,40 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 
+.quest-card {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(216, 183, 95, 0.06);
+}
+
+.quest-card span {
+  color: var(--yellow);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.quest-card strong {
+  font-size: 15px;
+}
+
+.quest-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.base-upgrade-button {
+  width: calc(100% - 24px);
+  min-height: 40px;
+  margin: 12px 12px 0;
+}
+
 .upgrade-list {
   display: grid;
   gap: 8px;
-  max-height: calc(min(650px, calc(100vh - 108px)) - 108px);
+  max-height: calc(min(650px, calc(100vh - 108px)) - 222px);
   overflow: auto;
   padding: 12px;
 }
