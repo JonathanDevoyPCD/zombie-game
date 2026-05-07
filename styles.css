@@ -61,16 +61,20 @@ button:disabled {
 }
 
 .hud {
-  position: fixed;
-  z-index: 4;
-  pointer-events: none;
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 135px;
+  position: absolute;
+  bottom: 162px;
+  align-content: center;
+  height: fit-content;
 }
 
 .hud-top {
-  top: 16px;
+  /* top: 16px; */
   left: 16px;
   right: 16px;
-  display: grid;
+  /* display: grid; */
   grid-template-columns: minmax(170px, 230px) minmax(260px, 1fr) minmax(190px, 280px);
   gap: 12px;
   align-items: start;
@@ -91,11 +95,17 @@ button:disabled {
 .brand {
   grid-column: 1;
   display: flex;
+  flex-wrap: wrap;
   min-height: 56px;
   gap: 12px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 8px;
+  width: 135px;
+  max-width: 135px;
   border-radius: 8px;
+}
+.brand div {
+  width: 100%;
 }
 
 .brand-mark {
@@ -106,6 +116,7 @@ button:disabled {
     linear-gradient(90deg, transparent 10px, #111515 10px 13px, transparent 13px),
     linear-gradient(#b33f38 0 0) center / 18px 18px no-repeat;
   image-rendering: pixelated;
+  display: none !important;
 }
 
 .brand strong,
@@ -118,6 +129,7 @@ button:disabled {
 .brand strong {
   font-size: 18px;
   line-height: 1;
+  display: none !important;
 }
 
 .brand span,
@@ -127,13 +139,23 @@ button:disabled {
   font-size: 12px;
 }
 
+.brand span#runStatus {
+    font-size: 16px;
+    word-break: break-word;
+    background: #f5f5f517;
+    padding: 8px;
+    border-radius: 8px;
+    /* margin-top: 10px; */
+}
+
 .stat-row {
-  position: fixed;
+  /* position: fixed;
   left: 18px;
-  bottom: 158px;
+  bottom: 158px; */
   z-index: 5;
   display: grid;
-  width: 132px;
+  max-width: 135px;
+  width: 135px;
   gap: 5px;
   padding: 8px;
   border-radius: 8px;
@@ -179,14 +201,15 @@ button:disabled {
 }
 
 .inventory {
-  position: fixed;
+  /* position: fixed;
   left: 18px;
-  bottom: 208px;
+  bottom: 208px; */
   z-index: 5;
-  display: grid;
-  width: min(330px, calc(100vw - 36px));
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 135px;
+  width: 135px;
   min-height: auto;
-  grid-template-columns: 92px 1fr;
   gap: 4px 8px;
   align-content: center;
   padding: 8px;
@@ -194,8 +217,7 @@ button:disabled {
   text-align: left;
 }
 
-.inventory span:first-child {
-  grid-column: 1 / -1;
+.inventory #weaponText, .inventory #inventoryText {
   color: #dce8cc;
   font-size: 12px;
   font-weight: 800;
@@ -204,6 +226,48 @@ button:disabled {
 .inventory span:not(:first-child) {
   font-size: 11px;
   white-space: nowrap;
+}
+
+#scrapText {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  width: 100%;
+}
+
+.resource-item {
+  display: inline-flex !important;
+  gap: 5px;
+  align-items: center;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.resource-icon {
+  display: inline-block !important;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  image-rendering: auto;
+}
+
+.resource-icon.scrap {
+  background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Treasure Chest.png");
+}
+
+.resource-icon.wood {
+  background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Stump Short.png");
+}
+
+.resource-icon.stone {
+  background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Rock 01.png");
+}
+
+.resource-icon.parts {
+  background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Cart.png");
 }
 
 .panel {

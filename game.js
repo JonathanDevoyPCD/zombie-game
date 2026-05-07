@@ -55,6 +55,7 @@ const ui = {
 };
 
 const keys = new Set();
+let resourceHudHtml = "";
 const mouse = {
   x: 0,
   y: 0,
@@ -2528,8 +2529,25 @@ function updateHud() {
   ui.armorText.textContent = `${armor} / ${player.maxArmor}`;
   ui.weaponText.textContent = player.reloading > 0 ? "Reloading" : weapons[player.weaponIndex].name;
   ui.ammoText.textContent = `${player.ammo} / ${player.reserveAmmo}`;
-  ui.scrapText.textContent = `${player.scrap} scrap | ${player.wood} wood | ${player.stone} stone | ${player.parts} parts`;
-  ui.runStatus.textContent = `${timeOfDayLabel()} - Zone ${currentZone()} - ${Math.round(Math.hypot(player.x, player.y))}m`;
+  const nextResourceHudHtml = `
+    <span class="resource-item"><span class="resource-icon scrap" aria-hidden="true"></span>${player.scrap} scrap</span>
+    <span class="resource-item"><span class="resource-icon wood" aria-hidden="true"></span>${player.wood} wood</span>
+    <span class="resource-item"><span class="resource-icon stone" aria-hidden="true"></span>${player.stone} stone</span>
+    <span class="resource-item"><span class="resource-icon parts" aria-hidden="true"></span>${player.parts} parts</span>
+  `;
+  if (nextResourceHudHtml !== resourceHudHtml) {
+    resourceHudHtml = nextResourceHudHtml;
+    ui.scrapText.innerHTML = resourceHudHtml;
+  }
+  const runStatusItems = ui.runStatus.querySelectorAll("span");
+  const distance = Math.round(Math.hypot(player.x, player.y));
+  if (runStatusItems.length >= 3) {
+    runStatusItems[0].textContent = `Time: ${timeOfDayLabel()}`;
+    runStatusItems[1].textContent = `District: Zone ${currentZone()}`;
+    runStatusItems[2].textContent = `Camp: ${distance}m`;
+  } else {
+    ui.runStatus.textContent = `${timeOfDayLabel()} - Zone ${currentZone()} - ${distance}m`;
+  }
   ui.levelText.textContent = `Level ${player.level} - ${player.xp}/${player.level * 60} XP`;
   ui.distanceText.textContent = baseStages[world.baseLevel].name;
   ui.questTitle.textContent = currentQuest().title;
