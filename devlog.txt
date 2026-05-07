@@ -1,0 +1,112 @@
+Dead Grid Devlog
+Date: 2026-05-07
+
+Purpose
+- This file is a session handoff log. Read it at the start of the next dev session to quickly recover context.
+- Keep appending new dated entries instead of replacing older ones.
+
+Repo State
+- Working branch: main
+- Remote: origin https://github.com/JonathanDevoyPCD/zombie-game.git
+- Latest pushed commit today: 40cc148 Update HUD resource display
+- Working tree was clean after the last push.
+
+What We Pulled Today
+- Pulled latest work from GitHub, fast-forwarding from 55c276c to b02f11b.
+- Pulled changes included:
+  - exploration progression systems
+  - day/night music crossfade
+  - compressed music files for Pages
+  - music cache-busting fixes
+
+Major Gameplay Additions Today
+- Added authored major landmarks on top of procedural structures:
+  - St. Marrow Clinic
+  - Ridge Radio Tower
+  - South Police Checkpoint
+  - Broken Supply Convoy
+  - Green Acre Farmhouse
+  - Sealed Bunker Hatch
+- Landmarks have discovery state, one-time discovery rewards, loot rewards, fog reveal radius, and minimap diamond markers.
+- Landmark state is saved and loaded.
+
+Pause Settings
+- Added a Settings option in the pause menu.
+- Added music volume slider.
+- Added SFX volume slider placeholder for future sound effects.
+- Added mute/unmute buttons for music and SFX.
+- Settings persist in localStorage under dead-grid-settings-v1.
+- Music volume now uses the settings value instead of a hard-coded constant.
+
+Timed Searching
+- Looting crates, procedural structures, and major landmarks now starts a timed search.
+- A small progress bar appears above the player while searching.
+- Search duration varies by target:
+  - smaller crates are short
+  - procedural locations are medium
+  - major landmarks can take up to 10 seconds
+- Moving too far interrupts the search.
+- Shooting is disabled while a search is active.
+
+Workbench and Crafting
+- Base level 1 now adds a workbench area at the main camp.
+- Press E near the workbench to open the crafting menu.
+- Craftable tools:
+  - Axe: used to harvest trees for wood
+  - Pickaxe: used to harvest stone from rocks
+- Crafting uses existing resource costs and updates the HUD/save state.
+
+Harvesting and Regrowth
+- Added stone as a resource.
+- Trees can be harvested for wood only after crafting an axe.
+- Stone nodes can be harvested only after crafting a pickaxe.
+- Harvested trees now regrow:
+  - short stump for 3 minutes
+  - tall stump for 3 minutes
+  - then back to a tree
+- Harvested rocks now regrow through three stages using the same small rock sprite at different sizes/opacity.
+- Regrowth uses world.harvestClock, a monotonic gameplay timer, so admin day/night time changes do not break regrowth.
+- Harvest/regrowth state is saved and loaded.
+- Older permanent harvested-node save data is tolerated and converted to timed regrowth state.
+
+Resource Node Art Direction
+- Removed active use of old canvas-rendered scenery trees and stones.
+- Forest scenery now only shows vector resource tree nodes from the Tile-Vector-Terrain pack.
+- Stone scenery now only shows the new small vector rock node.
+- Old canvas drawTree/drawRubble functions remain in the file but are no longer used by active scenery.
+- Stone nodes were made less frequent and more spread out.
+
+HUD Updates
+- User changed index.html to make runStatus contain three nested spans:
+  - Time
+  - District
+  - Camp distance
+- updateHud now updates those child spans dynamically and keeps a fallback for the old single-line HUD.
+- Added resource icon HUD rows using innerHTML:
+  - scrap uses Treasure Chest sprite
+  - wood uses Tree Stump Short sprite
+  - stone uses Rock 01 sprite
+  - parts uses Wooden Cart sprite
+- Resource HUD HTML is cached so it only rewrites when resource values change.
+- User also adjusted HUD styling in styles.css and those changes were pushed.
+
+Files Changed Today
+- game.js
+- index.html
+- styles.css
+
+Validation Used
+- node --check game.js
+- git diff --check
+
+Latest Pushed Commits From This Session
+- 5b3d354 Add settings crafting and harvest regrowth
+- 40cc148 Update HUD resource display
+
+Notes For Next Session
+- The inventory system is still planned for later:
+  - I key opens 4x4 inventory grid
+  - resource/item icons can reuse current sprite choices initially
+- SFX volume setting exists but there are no actual SFX yet.
+- If continuing harvesting work, consider adding clearer hit/harvest feedback and maybe tool durability later.
+- If continuing landmarks, consider a full-screen map view using discovered landmarks and fog reveal data.
