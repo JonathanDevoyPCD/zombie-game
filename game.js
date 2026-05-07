@@ -36,6 +36,17 @@ const ui = {
   resumeButton: document.getElementById("resumeButton"),
   saveGameButton: document.getElementById("saveGameButton"),
   pauseLoadButton: document.getElementById("pauseLoadButton"),
+  settingsButton: document.getElementById("settingsButton"),
+  settingsPanel: document.getElementById("settingsPanel"),
+  settingsBackButton: document.getElementById("settingsBackButton"),
+  musicVolumeSlider: document.getElementById("musicVolumeSlider"),
+  sfxVolumeSlider: document.getElementById("sfxVolumeSlider"),
+  muteMusicButton: document.getElementById("muteMusicButton"),
+  muteSfxButton: document.getElementById("muteSfxButton"),
+  craftingMenu: document.getElementById("craftingMenu"),
+  craftingCloseButton: document.getElementById("craftingCloseButton"),
+  craftAxeButton: document.getElementById("craftAxeButton"),
+  craftPickaxeButton: document.getElementById("craftPickaxeButton"),
   pauseNewButton: document.getElementById("pauseNewButton"),
   quitGameButton: document.getElementById("quitGameButton"),
   characterButtons: document.querySelectorAll(".character-option"),
@@ -57,23 +68,32 @@ const bullets = [];
 const zombies = [];
 const crates = [];
 const structures = [];
+const majorLandmarks = [];
 const particles = [];
 const drops = [];
 const revealedFog = new Set();
 const generatedStructureIds = new Set();
+const harvestStates = new Map();
 
 const FRAME_SIZE = 128;
 const SUMMER_GROUND_TILE_SIZE = 192;
 const DAY_LENGTH = 420;
-const MUSIC_VOLUME = 0.2;
 const MUSIC_VERSION = "direct-1";
+const SETTINGS_KEY = "dead-grid-settings-v1";
 const FOG_CELL_SIZE = 160;
 const FOG_REVEAL_RADIUS = 430;
 const FOG_SAFE_RADIUS = 230;
+const HARVEST_REGROW_STAGE = 180;
 const music = {
   day: new Audio(`music/DayMusic.mp3?v=${MUSIC_VERSION}`),
   night: new Audio(`music/NightMusic.mp3?v=${MUSIC_VERSION}`),
   started: false
+};
+const settings = {
+  musicVolume: 0.2,
+  sfxVolume: 0.8,
+  musicMuted: false,
+  sfxMuted: false
 };
 const spriteSheets = {};
 const terrainAssets = {
@@ -88,8 +108,13 @@ const terrainAssets = {
   watchtower: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Watchtower Short.png"),
   fenceHorizontal: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Fence Horizontal.png"),
   fenceVertical: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Fence Vertical.png"),
+  treeLarge: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_prop - Tree Large.png"),
+  treeMedium: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Medium.png"),
+  treeSmall: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Small.png"),
+  treeStumpShort: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Stump Short.png"),
+  treeStumpTall: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Stump Tall.png"),
+  rockSmall: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Rock 01.png"),
   grass: createTerrainAssetList(20, (index) => `sprites/TerrainOptimized/Grass/Grass-${String(index).padStart(2, "0")}.png`),
-  rocks: createTerrainAssetList(40, (index) => `sprites/TerrainOptimized/Rocks/stone grass-${String(index).padStart(2, "0")}.png`),
   clouds: createTerrainAssetList(41, (index) => `sprites/Clouds/Asset ${index}.png`)
 };
 const playerSpriteSets = {
@@ -225,7 +250,12 @@ const player = {
   speed: 190,
   scrap: 0,
   wood: 0,
+  stone: 0,
   parts: 0,
+  tools: {
+    axe: false,
+    pickaxe: false
+  },
   xp: 0,
   level: 1,
   weaponIndex: 0,
@@ -251,8 +281,11 @@ const world = {
   nextDropId: 1,
   messageTimer: 0,
   lootPrompt: null,
+  activeSearch: null,
+  craftingOpen: false,
   questIndex: 0,
   baseLevel: 0,
+  harvestClock: 0,
   started: performance.now(),
   state: "menu"
 };
@@ -280,6 +313,89 @@ const structureTypes = {
   depot: { name: "Supply Depot", resource: "parts", minZone: 2, color: "#646f73" },
   clinic: { name: "Field Clinic", resource: "parts", minZone: 3, color: "#87948c" },
   radio: { name: "Radio Tower", resource: "parts", minZone: 4, color: "#6b7385" }
+};
+
+const landmarkTypes = {
+  clinic: { name: "Abandoned Clinic", color: "#dfe8dc", marker: "#e9f1e7" },
+  radio: { name: "Radio Tower", color: "#b7c4bd", marker: "#87b6ff" },
+  checkpoint: { name: "Police Checkpoint", color: "#6b7385", marker: "#6f9bd8" },
+  convoy: { name: "Crashed Convoy", color: "#7b6860", marker: "#d8b75f" },
+  farmhouse: { name: "Old Farmhouse", color: "#9f7b43", marker: "#aacd62" },
+  bunker: { name: "Bunker Hatch", color: "#596461", marker: "#bcb7a4" }
+};
+
+const landmarkDefinitions = [
+  {
+    id: "st-marrow-clinic",
+    type: "clinic",
+    name: "St. Marrow Clinic",
+    x: -1160,
+    y: -860,
+    radius: 185,
+    revealRadius: 760,
+    discoveryReward: { xp: 45, parts: 6, med: 40 },
+    lootReward: { parts: 18, scrap: 85, med: 70 }
+  },
+  {
+    id: "ridge-radio",
+    type: "radio",
+    name: "Ridge Radio Tower",
+    x: 1420,
+    y: -940,
+    radius: 175,
+    revealRadius: 1180,
+    discoveryReward: { xp: 60, parts: 10, scrap: 45 },
+    lootReward: { parts: 28, scrap: 70, ammo: 30 }
+  },
+  {
+    id: "south-checkpoint",
+    type: "checkpoint",
+    name: "South Police Checkpoint",
+    x: 1060,
+    y: 850,
+    radius: 180,
+    revealRadius: 820,
+    discoveryReward: { xp: 45, ammo: 24, scrap: 50 },
+    lootReward: { ammo: 65, scrap: 95, parts: 12 }
+  },
+  {
+    id: "broken-convoy",
+    type: "convoy",
+    name: "Broken Supply Convoy",
+    x: -1480,
+    y: 690,
+    radius: 190,
+    revealRadius: 840,
+    discoveryReward: { xp: 50, scrap: 70, parts: 8 },
+    lootReward: { scrap: 135, parts: 24, ammo: 36 }
+  },
+  {
+    id: "green-acre-farm",
+    type: "farmhouse",
+    name: "Green Acre Farmhouse",
+    x: -360,
+    y: 1510,
+    radius: 205,
+    revealRadius: 780,
+    discoveryReward: { xp: 42, wood: 95, med: 24 },
+    lootReward: { wood: 190, scrap: 55, ammo: 24 }
+  },
+  {
+    id: "sealed-bunker",
+    type: "bunker",
+    name: "Sealed Bunker Hatch",
+    x: 1780,
+    y: 1340,
+    radius: 170,
+    revealRadius: 700,
+    discoveryReward: { xp: 75, parts: 18 },
+    lootReward: { parts: 45, scrap: 120, ammo: 55 }
+  }
+];
+
+const toolRecipes = {
+  axe: { name: "Axe", cost: { wood: 35, scrap: 20 } },
+  pickaxe: { name: "Pickaxe", cost: { wood: 45, scrap: 30, parts: 8 } }
 };
 
 const questDefinitions = [
@@ -597,10 +713,36 @@ function configureMusic() {
   });
 }
 
+function loadSettings() {
+  try {
+    const data = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    settings.musicVolume = clamp(Number(data.musicVolume ?? settings.musicVolume), 0, 1);
+    settings.sfxVolume = clamp(Number(data.sfxVolume ?? settings.sfxVolume), 0, 1);
+    settings.musicMuted = Boolean(data.musicMuted);
+    settings.sfxMuted = Boolean(data.sfxMuted);
+  } catch {
+    localStorage.removeItem(SETTINGS_KEY);
+  }
+  syncSettingsUi();
+  updateMusicVolumes();
+}
+
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function syncSettingsUi() {
+  ui.musicVolumeSlider.value = Math.round(settings.musicVolume * 100);
+  ui.sfxVolumeSlider.value = Math.round(settings.sfxVolume * 100);
+  ui.muteMusicButton.textContent = settings.musicMuted ? "Unmute Music" : "Mute Music";
+  ui.muteSfxButton.textContent = settings.sfxMuted ? "Unmute SFX" : "Mute SFX";
+}
+
 function updateMusicVolumes() {
   const dayAmount = dayMusicAmount();
-  music.day.volume = MUSIC_VOLUME * dayAmount;
-  music.night.volume = MUSIC_VOLUME * (1 - dayAmount);
+  const volume = settings.musicMuted ? 0 : settings.musicVolume;
+  music.day.volume = volume * dayAmount;
+  music.night.volume = volume * (1 - dayAmount);
 }
 
 function startMusic() {
@@ -689,7 +831,7 @@ function addResource(kind, amount) {
     player.hp = clamp(player.hp + amount, 0, player.maxHp);
     return;
   }
-  if (["scrap", "wood", "parts"].includes(kind)) {
+  if (["scrap", "wood", "stone", "parts"].includes(kind)) {
     player[kind] += amount;
   }
 }
@@ -723,6 +865,335 @@ function updateQuestProgress() {
     advanced = true;
   }
   if (advanced) flash(`Objective: ${currentQuest().title}`);
+}
+
+function isNearWorkbench() {
+  return world.baseLevel >= 1 && dist(player.x, player.y, safeZones[0].x + 74, safeZones[0].y + 34) < 70;
+}
+
+function updateCraftingButtons() {
+  ui.craftAxeButton.disabled = player.tools.axe || !canAfford(toolRecipes.axe.cost);
+  ui.craftPickaxeButton.disabled = player.tools.pickaxe || !canAfford(toolRecipes.pickaxe.cost);
+  ui.craftAxeButton.querySelector("small").textContent = player.tools.axe ? "Owned" : `Harvest trees for wood - ${formatCost(toolRecipes.axe.cost)}`;
+  ui.craftPickaxeButton.querySelector("small").textContent = player.tools.pickaxe ? "Owned" : `Harvest stone from rocks - ${formatCost(toolRecipes.pickaxe.cost)}`;
+}
+
+function openCraftingMenu() {
+  if (!isNearWorkbench()) {
+    flash(world.baseLevel >= 1 ? "Move closer to the workbench" : "Upgrade the base to build a workbench");
+    return;
+  }
+  world.craftingOpen = true;
+  ui.craftingMenu.hidden = false;
+  updateCraftingButtons();
+  mouse.down = false;
+  keys.clear();
+}
+
+function closeCraftingMenu() {
+  world.craftingOpen = false;
+  ui.craftingMenu.hidden = true;
+}
+
+function craftTool(kind) {
+  const recipe = toolRecipes[kind];
+  if (!recipe || player.tools[kind]) return;
+  if (!spendResources(recipe.cost)) {
+    flash(`Need ${formatCost(recipe.cost)}`);
+    return;
+  }
+  player.tools[kind] = true;
+  flash(`Crafted ${recipe.name}`);
+  updateCraftingButtons();
+  rebuildUpgradePanel();
+  saveProgress();
+}
+
+function resetLandmarks() {
+  majorLandmarks.length = 0;
+  landmarkDefinitions.forEach((landmark) => {
+    majorLandmarks.push({
+      ...landmark,
+      discovered: false,
+      looted: false
+    });
+  });
+}
+
+function landmarkRewardText(rewards) {
+  return Object.entries(rewards)
+    .filter(([, amount]) => amount > 0)
+    .map(([kind, amount]) => {
+      if (kind === "med") return "patched wounds";
+      if (kind === "xp") return `${amount} XP`;
+      return `${amount} ${kind}`;
+    })
+    .join(", ");
+}
+
+function applyLandmarkReward(rewards) {
+  Object.entries(rewards).forEach(([kind, amount]) => {
+    if (kind === "xp") {
+      gainXp(amount);
+    } else {
+      addResource(kind, amount);
+    }
+  });
+}
+
+function discoverLandmark(landmark) {
+  if (!landmark || landmark.discovered) return false;
+  landmark.discovered = true;
+  revealFogCircle(landmark.x, landmark.y, landmark.revealRadius);
+  applyLandmarkReward(landmark.discoveryReward);
+  addHitParticles(landmark.x, landmark.y, landmarkTypes[landmark.type].marker, 18);
+  flash(`Discovered ${landmark.name}: ${landmarkRewardText(landmark.discoveryReward)}`);
+  rebuildUpgradePanel();
+  updateQuestProgress();
+  saveProgress();
+  return true;
+}
+
+function lootLandmark(landmark) {
+  if (!landmark || landmark.looted) return false;
+  if (!landmark.discovered) discoverLandmark(landmark);
+  landmark.looted = true;
+  applyLandmarkReward(landmark.lootReward);
+  addHitParticles(landmark.x, landmark.y, landmarkTypes[landmark.type].marker, 24);
+  flash(`${landmark.name}: ${landmarkRewardText(landmark.lootReward)}`);
+  rebuildUpgradePanel();
+  updateQuestProgress();
+  saveProgress();
+  return true;
+}
+
+function crateSearchDuration(crate) {
+  return clamp(2.1 + crate.zone * 0.35, 2, 4.8);
+}
+
+function structureSearchDuration(structure) {
+  const durations = { cabin: 3, camp: 4.2, farm: 5.2, depot: 6.4, clinic: 7.1, radio: 7.8 };
+  return durations[structure.type] || 4;
+}
+
+function landmarkSearchDuration(landmark) {
+  const durations = { checkpoint: 6.2, convoy: 7.4, farmhouse: 8, clinic: 8.6, radio: 9.4, bunker: 10 };
+  return durations[landmark.type] || 7;
+}
+
+function completeCrateLoot(crate) {
+  if (!crate || crate.looted) return;
+  crate.looted = true;
+  const scrap = Math.round(rand(18, 34) * crate.zone);
+  const ammo = Math.round(rand(8, 18) + crate.zone * 4);
+  const wood = Math.random() > 0.45 ? Math.round(rand(10, 24) * crate.zone) : 0;
+  const stone = crate.zone >= 2 && Math.random() > 0.62 ? Math.round(rand(8, 18) * crate.zone) : 0;
+  const parts = crate.zone >= 2 && Math.random() > 0.7 ? Math.round(rand(3, 8) * crate.zone) : 0;
+  const med = Math.random() > 0.64;
+  player.scrap += scrap;
+  player.wood += wood;
+  player.stone += stone;
+  player.parts += parts;
+  player.reserveAmmo = clamp(player.reserveAmmo + ammo, 0, player.ammoCap);
+  if (med) player.hp = clamp(player.hp + 28, 0, player.maxHp);
+  addHitParticles(crate.x, crate.y, "#d8b75f", 10);
+  flash(`Looted ${scrap} scrap, ${ammo} ammo${wood ? `, ${wood} wood` : ""}${stone ? `, ${stone} stone` : ""}${parts ? `, ${parts} parts` : ""}${med ? ", patched wounds" : ""}`);
+  rebuildUpgradePanel();
+  updateQuestProgress();
+  saveProgress();
+}
+
+function harvestNodeKey(kind, tileX, tileY) {
+  return `${kind}:${tileX},${tileY}`;
+}
+
+function harvestStateStage(state) {
+  if (!state) return "ready";
+  const elapsed = world.harvestClock - state.started;
+  if (elapsed >= HARVEST_REGROW_STAGE * 2) {
+    harvestStates.delete(state.key);
+    return "ready";
+  }
+  return elapsed >= HARVEST_REGROW_STAGE ? "middle" : "early";
+}
+
+function harvestNodeReady(node) {
+  return harvestStateStage(harvestStates.get(node.key)) === "ready";
+}
+
+function saveHarvestStates() {
+  return Array.from(harvestStates.values())
+    .filter((state) => world.harvestClock - state.started < HARVEST_REGROW_STAGE * 2)
+    .map((state) => ({
+      key: state.key,
+      kind: state.kind,
+      started: state.started,
+      variant: state.variant
+    }));
+}
+
+function restoreHarvestStates(items) {
+  harvestStates.clear();
+  (Array.isArray(items) ? items : []).forEach((state) => {
+    if (typeof state === "string") {
+      harvestStates.set(state, {
+        key: state,
+        kind: state.startsWith("stone:") ? "stone" : "tree",
+        started: world.harvestClock,
+        variant: 0
+      });
+      return;
+    }
+    if (!state?.key || typeof state.key !== "string") return;
+    harvestStates.set(state.key, {
+      key: state.key,
+      kind: state.kind === "stone" ? "stone" : "tree",
+      started: Number(state.started) || world.harvestClock,
+      variant: Number(state.variant) || 0
+    });
+  });
+}
+
+function treeAssetForNode(node) {
+  const variants = ["treeLarge", "treeMedium", "treeSmall"];
+  return variants[Math.floor(hash2(node.x, node.y, 941) * variants.length) % variants.length];
+}
+
+function rockAssetForNode(node) {
+  return terrainAssets.rockSmall[0];
+}
+
+function drawHarvestNode(node, fallbackScreen = null, fallbackSeed = 0) {
+  const state = harvestStates.get(node.key);
+  const stage = harvestStateStage(state);
+  const flip = hash2(node.x, node.y, 943) > 0.5;
+  if (node.kind === "wood") {
+    if (stage === "early") return drawPropImage("treeStumpShort", node.x, node.y + 22, 44, 0.98, flip);
+    if (stage === "middle") return drawPropImage("treeStumpTall", node.x, node.y + 20, 48, 0.98, flip);
+    const width = node.treeAsset === "treeLarge" ? 142 : node.treeAsset === "treeMedium" ? 116 : 88;
+    return drawPropImage(node.treeAsset || treeAssetForNode(node), node.x, node.y + 28, width, 0.98, flip);
+  }
+
+  if (stage === "early") return drawPropImage("rockSmall", node.x, node.y + 18, 28, 0.54, flip);
+  if (stage === "middle") return drawPropImage("rockSmall", node.x, node.y + 18, 36, 0.76, flip);
+  const asset = rockAssetForNode(node);
+  if (asset?.loaded) return drawLoadedAsset(asset, node.x, node.y + 18, 46, 0.98, flip);
+  return false;
+}
+
+function harvestNodeFromCell(tileX, tileY) {
+  const tile = 128;
+  const centerX = tileX + tile / 2;
+  const centerY = tileY + tile / 2;
+  const terrain = terrainAt(centerX, centerY);
+  const h = hash2(tileX, tileY, 8);
+  if (isInAnySafeZone(centerX, centerY, 150) || isSummerDirtWorld(centerX, centerY) || terrain === "water" || terrain === "bridge" || terrain === "path") return null;
+
+  const x = centerX + (hash2(tileX, tileY, 9) - 0.5) * 54;
+  const y = centerY + (hash2(tileX, tileY, 10) - 0.5) * 54;
+  const zone = Math.max(1, Math.floor(Math.hypot(x, y) / 430) + 1);
+  if (terrain === "forest" && h > 0.34) {
+    return {
+      key: harvestNodeKey("tree", tileX, tileY),
+      kind: "wood",
+      name: "Tree",
+      tool: "axe",
+      treeAsset: treeAssetForNode({ x, y }),
+      x,
+      y,
+      duration: 3.2,
+      amount: Math.round(18 + zone * 7 + h * 14)
+    };
+  }
+  if ((terrain === "dry" && h > 0.74) || (terrain === "forest" && h > 0.9)) {
+    return {
+      key: harvestNodeKey("stone", tileX, tileY),
+      kind: "stone",
+      name: "Stone",
+      tool: "pickaxe",
+      x,
+      y,
+      duration: 4.4,
+      amount: Math.round(12 + zone * 5 + h * 12)
+    };
+  }
+  return null;
+}
+
+function nearestHarvestTarget() {
+  let best = null;
+  const tile = 128;
+  const baseX = Math.floor(player.x / tile) * tile;
+  const baseY = Math.floor(player.y / tile) * tile;
+  for (let y = baseY - tile * 2; y <= baseY + tile * 2; y += tile) {
+    for (let x = baseX - tile * 2; x <= baseX + tile * 2; x += tile) {
+      const node = harvestNodeFromCell(x, y);
+      if (!node || !harvestNodeReady(node)) continue;
+      const d = dist(player.x, player.y, node.x, node.y);
+      if (d > 70 || (best && d >= best.distance)) continue;
+      best = { ...node, distance: d };
+    }
+  }
+  return best;
+}
+
+function beginSearch(search) {
+  if (world.activeSearch || world.state !== "playing") return;
+  world.activeSearch = {
+    ...search,
+    elapsed: 0
+  };
+  mouse.down = false;
+}
+
+function cancelSearch(message = "") {
+  if (!world.activeSearch) return;
+  world.activeSearch = null;
+  if (message) flash(message);
+}
+
+function completeActiveSearch() {
+  const search = world.activeSearch;
+  world.activeSearch = null;
+  if (!search) return;
+  if (search.kind === "crate") completeCrateLoot(search.target);
+  else if (search.kind === "structure") lootStructure(search.target);
+  else if (search.kind === "landmark") lootLandmark(search.target);
+  else if (search.kind === "harvest") {
+    if (!harvestNodeReady(search.target)) return;
+    harvestStates.set(search.target.key, {
+      key: search.target.key,
+      kind: search.target.kind === "stone" ? "stone" : "tree",
+      started: world.harvestClock,
+      variant: Math.floor(hash2(search.target.x, search.target.y, world.harvestClock) * 3)
+    });
+    addResource(search.target.kind, search.target.amount);
+    addHitParticles(search.target.x, search.target.y, search.target.kind === "wood" ? "#8b5a32" : "#aeb8a6", 12);
+    flash(`Harvested ${search.target.amount} ${search.target.kind}`);
+    rebuildUpgradePanel();
+    updateQuestProgress();
+    saveProgress();
+  }
+}
+
+function updateActiveSearch(dt) {
+  const search = world.activeSearch;
+  if (!search || !player.alive || world.state !== "playing") return;
+  const target = search.target;
+  if (dist(player.x, player.y, search.x, search.y) > search.range) {
+    cancelSearch("Search interrupted");
+    return;
+  }
+  if ((search.kind === "crate" || search.kind === "structure" || search.kind === "landmark") && target.looted) {
+    cancelSearch();
+    return;
+  }
+  if (search.kind === "harvest" && !harvestNodeReady(target)) {
+    cancelSearch();
+    return;
+  }
+  search.elapsed += dt;
+  if (search.elapsed >= search.duration) completeActiveSearch();
 }
 
 function rebuildUpgradePanel() {
@@ -1205,6 +1676,12 @@ function addHitParticles(x, y, color, count) {
 }
 
 function lootNearby() {
+  if (world.activeSearch) return;
+  if (isNearWorkbench()) {
+    openCraftingMenu();
+    return;
+  }
+
   let found = null;
   for (const crate of crates) {
     if (!crate.looted && dist(player.x, player.y, crate.x, crate.y) < 54) {
@@ -1213,30 +1690,64 @@ function lootNearby() {
     }
   }
   if (found) {
-    found.looted = true;
-    const scrap = Math.round(rand(18, 34) * found.zone);
-    const ammo = Math.round(rand(8, 18) + found.zone * 4);
-    const wood = Math.random() > 0.45 ? Math.round(rand(10, 24) * found.zone) : 0;
-    const parts = found.zone >= 2 && Math.random() > 0.7 ? Math.round(rand(3, 8) * found.zone) : 0;
-    const med = Math.random() > 0.64;
-    player.scrap += scrap;
-    player.wood += wood;
-    player.parts += parts;
-    player.reserveAmmo = clamp(player.reserveAmmo + ammo, 0, player.ammoCap);
-    if (med) player.hp = clamp(player.hp + 28, 0, player.maxHp);
-    addHitParticles(found.x, found.y, "#d8b75f", 10);
-    flash(`Looted ${scrap} scrap, ${ammo} ammo${wood ? `, ${wood} wood` : ""}${parts ? `, ${parts} parts` : ""}${med ? ", patched wounds" : ""}`);
-    rebuildUpgradePanel();
-    updateQuestProgress();
-    saveProgress();
+    beginSearch({
+      kind: "crate",
+      label: "Searching crate",
+      target: found,
+      x: found.x,
+      y: found.y,
+      range: 72,
+      duration: crateSearchDuration(found)
+    });
     return;
+  }
+
+  for (const landmark of majorLandmarks) {
+    if (!landmark.looted && dist(player.x, player.y, landmark.x, landmark.y) < 112) {
+      beginSearch({
+        kind: "landmark",
+        label: `Searching ${landmark.name}`,
+        target: landmark,
+        x: landmark.x,
+        y: landmark.y,
+        range: 140,
+        duration: landmarkSearchDuration(landmark)
+      });
+      return;
+    }
   }
 
   for (const structure of structures) {
     if (!structure.looted && dist(player.x, player.y, structure.x, structure.y) < 78) {
-      lootStructure(structure);
+      beginSearch({
+        kind: "structure",
+        label: `Searching ${structureTypes[structure.type].name}`,
+        target: structure,
+        x: structure.x,
+        y: structure.y,
+        range: 100,
+        duration: structureSearchDuration(structure)
+      });
       return;
     }
+  }
+
+  const harvest = nearestHarvestTarget();
+  if (harvest) {
+    if (!player.tools[harvest.tool]) {
+      flash(`Craft a ${toolRecipes[harvest.tool].name} at the workbench first`);
+      return;
+    }
+    beginSearch({
+      kind: "harvest",
+      label: `Harvesting ${harvest.name}`,
+      target: harvest,
+      x: harvest.x,
+      y: harvest.y,
+      range: 84,
+      duration: harvest.duration
+    });
+    return;
   }
 
   for (let i = drops.length - 1; i >= 0; i -= 1) {
@@ -1274,10 +1785,12 @@ function saveProgress() {
   const data = {
     scrap: player.scrap,
     wood: player.wood,
+    stone: player.stone,
     parts: player.parts,
     xp: player.xp,
     level: player.level,
     weaponIndex: player.weaponIndex,
+    tools: { ...player.tools },
     player: {
       character: player.character,
       x: player.x,
@@ -1295,9 +1808,11 @@ function saveProgress() {
       nextCrate: world.nextCrate,
       nextDropId: world.nextDropId,
       questIndex: world.questIndex,
-      baseLevel: world.baseLevel
+      baseLevel: world.baseLevel,
+      harvestClock: world.harvestClock
     },
     fog: Array.from(revealedFog),
+    harvested: saveHarvestStates(),
     tech: Object.fromEntries(Object.entries(tech).map(([key, item]) => [key, item.level])),
     zombies: zombies.slice(0, 70).map((zombie) => ({
       x: zombie.x,
@@ -1337,6 +1852,11 @@ function saveProgress() {
       looted: structure.looted,
       wobble: structure.wobble
     })),
+    landmarks: majorLandmarks.map((landmark) => ({
+      id: landmark.id,
+      discovered: landmark.discovered,
+      looted: landmark.looted
+    })),
     drops: drops.map((drop) => ({
       id: drop.id,
       x: drop.x,
@@ -1358,7 +1878,10 @@ function loadProgress() {
     const data = JSON.parse(raw);
     player.scrap = Number(data.scrap) || 0;
     player.wood = Number(data.wood) || 0;
+    player.stone = Number(data.stone) || 0;
     player.parts = Number(data.parts) || 0;
+    player.tools.axe = Boolean(data.tools?.axe);
+    player.tools.pickaxe = Boolean(data.tools?.pickaxe);
     player.xp = Number(data.xp) || 0;
     player.level = Number(data.level) || 1;
     Object.entries(data.tech || {}).forEach(([key, level]) => {
@@ -1389,17 +1912,22 @@ function loadProgress() {
     world.nextDropId = Number(data.world?.nextDropId) || 1;
     world.questIndex = clamp(Number(data.world?.questIndex) || 0, 0, questDefinitions.length - 1);
     world.baseLevel = clamp(Number(data.world?.baseLevel) || 0, 0, baseStages.length - 1);
+    world.harvestClock = Number(data.world?.harvestClock ?? data.world?.time) || 0;
+    world.activeSearch = null;
+    closeCraftingMenu();
     applyBaseStats();
     revealedFog.clear();
     (Array.isArray(data.fog) ? data.fog : []).forEach((key) => {
       if (typeof key === "string") revealedFog.add(key);
     });
+    restoreHarvestStates(data.harvested);
     updateFogOfWar();
     bullets.length = 0;
     particles.length = 0;
     zombies.length = 0;
     crates.length = 0;
     structures.length = 0;
+    resetLandmarks();
     generatedStructureIds.clear();
     drops.length = 0;
     (data.zombies || []).forEach((zombie) => zombies.push({
@@ -1422,6 +1950,13 @@ function loadProgress() {
         discovered: Boolean(structure.discovered),
         looted: Boolean(structure.looted)
       });
+    });
+    const landmarkStates = new Map((data.landmarks || []).map((landmark) => [landmark.id, landmark]));
+    majorLandmarks.forEach((landmark) => {
+      const state = landmarkStates.get(landmark.id);
+      landmark.discovered = Boolean(state?.discovered);
+      landmark.looted = Boolean(state?.looted);
+      if (landmark.discovered) revealFogCircle(landmark.x, landmark.y, landmark.revealRadius);
     });
     (data.drops || []).forEach((drop) => drops.push({
       ...drop,
@@ -1451,21 +1986,29 @@ function clearProgress() {
   });
   player.scrap = 0;
   player.wood = 0;
+  player.stone = 0;
   player.parts = 0;
+  player.tools.axe = false;
+  player.tools.pickaxe = false;
   player.xp = 0;
   player.level = 1;
   player.weaponIndex = 0;
   player.character = validCharacter(selectedCharacter);
   player.flashlight = false;
   revealedFog.clear();
+  harvestStates.clear();
   structures.length = 0;
+  resetLandmarks();
   generatedStructureIds.clear();
   world.questIndex = 0;
   world.baseLevel = 0;
+  world.activeSearch = null;
+  closeCraftingMenu();
   world.time = DAY_LENGTH * 0.35;
   world.nextSpawn = 0;
   world.nextCrate = 0;
   world.nextDropId = 1;
+  world.harvestClock = 0;
   applyBaseStats();
   applyTechStats();
   restartRun(false);
@@ -1528,6 +2071,8 @@ function restartRun(showMessage = true) {
   crates.length = 0;
   particles.length = 0;
   drops.length = 0;
+  world.activeSearch = null;
+  closeCraftingMenu();
   ui.deathScreen.hidden = true;
   ensureWorldPopulated();
   if (showMessage) flash("Back at base");
@@ -1557,6 +2102,8 @@ function startGame(fromSave = false) {
   world.state = "playing";
   ui.mainMenu.hidden = true;
   ui.pauseMenu.hidden = true;
+  ui.settingsPanel.hidden = true;
+  closeCraftingMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   startMusic();
@@ -1566,8 +2113,11 @@ function startGame(fromSave = false) {
 
 function openNewGameMenu() {
   world.state = "menu";
+  world.activeSearch = null;
   ui.mainMenu.hidden = false;
   ui.pauseMenu.hidden = true;
+  ui.settingsPanel.hidden = true;
+  closeCraftingMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   stopMusic();
@@ -1578,7 +2128,10 @@ function pauseGame() {
   if (world.state !== "playing") return;
   world.state = "paused";
   ui.pauseMenu.hidden = false;
+  closeSettingsPanel();
+  closeCraftingMenu();
   mouse.down = false;
+  keys.clear();
   updateMenuButtons();
 }
 
@@ -1586,6 +2139,7 @@ function resumeGame() {
   if (world.state !== "paused") return;
   world.state = "playing";
   ui.pauseMenu.hidden = true;
+  ui.settingsPanel.hidden = true;
   mouse.down = false;
 }
 
@@ -1602,6 +2156,8 @@ function loadGameFromMenu() {
   world.state = "playing";
   ui.mainMenu.hidden = true;
   ui.pauseMenu.hidden = true;
+  ui.settingsPanel.hidden = true;
+  closeCraftingMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   startMusic();
@@ -1616,8 +2172,11 @@ function saveFromPause() {
 function quitToMainMenu() {
   saveProgress();
   world.state = "menu";
+  world.activeSearch = null;
   ui.mainMenu.hidden = false;
   ui.pauseMenu.hidden = true;
+  ui.settingsPanel.hidden = true;
+  closeCraftingMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   stopMusic();
@@ -1628,6 +2187,15 @@ function updateMenuButtons() {
   const enabled = hasSave();
   ui.loadGameButton.disabled = !enabled;
   ui.pauseLoadButton.disabled = !enabled;
+}
+
+function openSettingsPanel() {
+  syncSettingsUi();
+  ui.settingsPanel.hidden = false;
+}
+
+function closeSettingsPanel() {
+  ui.settingsPanel.hidden = true;
 }
 
 function switchWeapon(delta) {
@@ -1652,6 +2220,7 @@ function update(dt) {
   }
 
   world.time += dt;
+  world.harvestClock += dt;
   updateMusicVolumes();
 
   if (!player.alive) {
@@ -1665,6 +2234,7 @@ function update(dt) {
   updateBullets(dt);
   updateParticles(dt);
   updateCratesAndDrops(dt);
+  updateActiveSearch(dt);
   updateSpawns(dt);
   updateFogOfWar();
   updateQuestProgress();
@@ -1861,6 +2431,15 @@ function updateCratesAndDrops(dt) {
   }
 
   world.lootPrompt = null;
+  if (world.activeSearch) return;
+  if (isNearWorkbench()) {
+    world.lootPrompt = { x: safeZones[0].x + 74, y: safeZones[0].y + 12, label: "E" };
+  }
+  for (const landmark of majorLandmarks) {
+    if (!landmark.discovered && dist(player.x, player.y, landmark.x, landmark.y) < landmark.radius) {
+      discoverLandmark(landmark);
+    }
+  }
   for (const structure of structures) {
     if (!structure.discovered && dist(player.x, player.y, structure.x, structure.y) < 190) {
       structure.discovered = true;
@@ -1876,11 +2455,25 @@ function updateCratesAndDrops(dt) {
     }
   }
   if (!world.lootPrompt) {
+    for (const landmark of majorLandmarks) {
+      if (!landmark.looted && dist(player.x, player.y, landmark.x, landmark.y) < 112) {
+        world.lootPrompt = { x: landmark.x, y: landmark.y - 88, label: "E" };
+        break;
+      }
+    }
+  }
+  if (!world.lootPrompt) {
     for (const structure of structures) {
       if (!structure.looted && dist(player.x, player.y, structure.x, structure.y) < 78) {
         world.lootPrompt = { x: structure.x, y: structure.y - 58, label: "E" };
         break;
       }
+    }
+  }
+  if (!world.lootPrompt) {
+    const harvest = nearestHarvestTarget();
+    if (harvest) {
+      world.lootPrompt = { x: harvest.x, y: harvest.y - 42, label: "E" };
     }
   }
   if (!world.lootPrompt) {
@@ -1935,19 +2528,21 @@ function updateHud() {
   ui.armorText.textContent = `${armor} / ${player.maxArmor}`;
   ui.weaponText.textContent = player.reloading > 0 ? "Reloading" : weapons[player.weaponIndex].name;
   ui.ammoText.textContent = `${player.ammo} / ${player.reserveAmmo}`;
-  ui.scrapText.textContent = `${player.scrap} scrap | ${player.wood} wood | ${player.parts} parts`;
+  ui.scrapText.textContent = `${player.scrap} scrap | ${player.wood} wood | ${player.stone} stone | ${player.parts} parts`;
   ui.runStatus.textContent = `${timeOfDayLabel()} - Zone ${currentZone()} - ${Math.round(Math.hypot(player.x, player.y))}m`;
   ui.levelText.textContent = `Level ${player.level} - ${player.xp}/${player.level * 60} XP`;
   ui.distanceText.textContent = baseStages[world.baseLevel].name;
   ui.questTitle.textContent = currentQuest().title;
   ui.questText.textContent = currentQuest().text();
   updateBaseUpgradeButton();
+  updateCraftingButtons();
 }
 
 function draw() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGround();
   drawSceneryProps();
+  drawLandmarks();
   drawStructures();
   drawBase();
   drawCrates();
@@ -1956,6 +2551,7 @@ function draw() {
   drawZombies();
   drawPlayer();
   drawParticles();
+  drawSearchProgress();
   drawLighting();
   drawFogOfWar();
   drawPrompt();
@@ -2335,6 +2931,10 @@ function drawTerrainAsset(kind, worldX, worldY, scale, salt, alpha = 1) {
 function drawPropImage(kind, worldX, worldY, width, alpha = 1, flip = false) {
   const asset = terrainAssets[kind]?.[0];
   if (!asset?.loaded) return false;
+  return drawLoadedAsset(asset, worldX, worldY, width, alpha, flip);
+}
+
+function drawLoadedAsset(asset, worldX, worldY, width, alpha = 1, flip = false, anchor = "center") {
   const screen = worldToScreen(worldX, worldY);
   const height = (asset.image.height / asset.image.width) * width;
   ctx.save();
@@ -2342,7 +2942,8 @@ function drawPropImage(kind, worldX, worldY, width, alpha = 1, flip = false) {
   ctx.globalAlpha = alpha;
   ctx.translate(screen.x, screen.y);
   if (flip) ctx.scale(-1, 1);
-  ctx.drawImage(asset.image, -width / 2, -height / 2, width, height);
+  const y = anchor === "bottom" ? -height : -height / 2;
+  ctx.drawImage(asset.image, -width / 2, y, width, height);
   ctx.restore();
   ctx.imageSmoothingEnabled = false;
   return true;
@@ -2366,17 +2967,25 @@ function drawSceneryProps() {
       const propX = centerX + (hash2(x, y, 9) - 0.5) * 54;
       const propY = centerY + (hash2(x, y, 10) - 0.5) * 54;
       const screen = worldToScreen(propX, propY);
+      const harvestNode = harvestNodeFromCell(x, y);
       if (terrain === "forest" && h > 0.28) {
-        if (h > 0.76) drawTerrainAsset("rocks", propX + 24, propY + 24, 0.28 + h * 0.1, 18, 0.92);
-        drawTree(screen.x, screen.y, h);
+        if (harvestNode?.kind === "wood") {
+          drawHarvestNode(harvestNode, screen, h);
+        }
       } else if ((terrain === "grass" || terrain === "camp") && h > 0.58) {
         drawTerrainAsset("grass", propX, propY + 20, 0.34 + h * 0.22, 21, 0.96) || drawBush(screen.x, screen.y, h);
       } else if (terrain === "grass" && h > 0.42) {
         drawTerrainAsset("grass", propX, propY + 22, 0.2 + h * 0.16, 23, 0.82);
       } else if (terrain === "dry" && h > 0.72) {
-        drawTerrainAsset("rocks", propX, propY + 16, 0.34 + h * 0.18, 25, 0.96) || drawRubble(screen.x, screen.y, h);
+        if (harvestNode?.kind === "stone") {
+          drawHarvestNode(harvestNode, screen, h);
+        }
       } else if (terrain === "dry" && h > 0.52) {
-        drawTerrainAsset("grass", propX, propY + 18, 0.18 + h * 0.12, 27, 0.72);
+        if (harvestNode?.kind === "stone") {
+          drawHarvestNode(harvestNode, screen, h);
+        } else {
+          drawTerrainAsset("grass", propX, propY + 18, 0.18 + h * 0.12, 27, 0.72);
+        }
       }
     }
   }
@@ -2438,6 +3047,115 @@ function drawStructureDetails(structure) {
     ctx.stroke();
   } else {
     drawPropImage("house", structure.x, structure.y - 4, 98, alpha, flip) || drawStructureFallback(structure, worldToScreen(structure.x, structure.y));
+  }
+}
+
+function drawLandmarkDetails(landmark) {
+  const alpha = landmark.looted ? 0.66 : 1;
+  const flip = hash2(landmark.x, landmark.y, 730) > 0.5;
+  if (landmark.type === "clinic") {
+    drawPropImage("house", landmark.x, landmark.y - 10, 146, alpha, flip) || drawStructureFallback({ type: "clinic" }, worldToScreen(landmark.x, landmark.y));
+    const s = worldToScreen(landmark.x, landmark.y - 86);
+    ctx.fillStyle = "#edf2df";
+    ctx.fillRect(Math.floor(s.x - 14), Math.floor(s.y - 4), 28, 8);
+    ctx.fillRect(Math.floor(s.x - 4), Math.floor(s.y - 14), 8, 28);
+    drawPropImage("well", landmark.x - 92, landmark.y + 54, 52, alpha);
+  } else if (landmark.type === "radio") {
+    drawPropImage("watchtower", landmark.x, landmark.y - 18, 148, alpha) || drawStructureFallback({ type: "radio" }, worldToScreen(landmark.x, landmark.y));
+    const s = worldToScreen(landmark.x + 58, landmark.y - 112);
+    ctx.strokeStyle = "#c7d3d0";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y + 114);
+    ctx.lineTo(s.x, s.y - 34);
+    ctx.moveTo(s.x - 34, s.y + 6);
+    ctx.lineTo(s.x, s.y - 34);
+    ctx.lineTo(s.x + 34, s.y + 6);
+    ctx.moveTo(s.x - 25, s.y + 48);
+    ctx.lineTo(s.x + 25, s.y + 48);
+    ctx.stroke();
+  } else if (landmark.type === "checkpoint") {
+    drawPropImage("watchtower", landmark.x - 74, landmark.y - 22, 92, alpha);
+    drawPropImage("watchtower", landmark.x + 86, landmark.y - 18, 84, alpha, true);
+    drawPropImage("barrel", landmark.x - 16, landmark.y + 58, 38, alpha);
+    drawPropImage("chest", landmark.x + 38, landmark.y + 64, 42, alpha);
+    const s = worldToScreen(landmark.x, landmark.y + 10);
+    ctx.strokeStyle = "#7a5232";
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(s.x - 114, s.y);
+    ctx.lineTo(s.x + 112, s.y);
+    ctx.stroke();
+  } else if (landmark.type === "convoy") {
+    const s = worldToScreen(landmark.x, landmark.y);
+    ctx.save();
+    ctx.fillStyle = "#68473e";
+    ctx.fillRect(Math.floor(s.x - 92), Math.floor(s.y - 34), 78, 42);
+    ctx.fillStyle = "#4e6068";
+    ctx.fillRect(Math.floor(s.x + 10), Math.floor(s.y - 12), 94, 46);
+    ctx.fillStyle = "#1d1f1f";
+    [-72, -28, 32, 84].forEach((wheel) => {
+      ctx.beginPath();
+      ctx.arc(s.x + wheel, s.y + 14, 9, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+    drawPropImage("barrel", landmark.x - 28, landmark.y + 74, 40, alpha);
+    drawPropImage("chest", landmark.x + 78, landmark.y + 76, 46, alpha);
+  } else if (landmark.type === "farmhouse") {
+    drawPropImage("house", landmark.x, landmark.y - 8, 152, alpha, flip) || drawStructureFallback({ type: "farm" }, worldToScreen(landmark.x, landmark.y));
+    drawPropImage("windmill", landmark.x + 130, landmark.y - 28, 122, alpha);
+    drawPropImage("well", landmark.x - 104, landmark.y + 64, 58, alpha);
+    drawPropImage("barrel", landmark.x + 54, landmark.y + 88, 38, alpha);
+  } else if (landmark.type === "bunker") {
+    const s = worldToScreen(landmark.x, landmark.y);
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.24)";
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y + 18, 82, 24, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#596461";
+    ctx.fillRect(Math.floor(s.x - 64), Math.floor(s.y - 32), 128, 64);
+    ctx.fillStyle = "#252d2d";
+    ctx.fillRect(Math.floor(s.x - 38), Math.floor(s.y - 12), 76, 42);
+    ctx.strokeStyle = "#bcb7a4";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(Math.floor(s.x - 38), Math.floor(s.y - 12), 76, 42);
+    ctx.restore();
+    drawPropImage("chest", landmark.x + 96, landmark.y + 58, 44, alpha);
+  }
+}
+
+function drawLandmarks() {
+  const view = viewportBounds(260);
+  for (const landmark of majorLandmarks) {
+    if (landmark.x < view.left || landmark.x > view.right || landmark.y < view.top || landmark.y > view.bottom) continue;
+    const s = worldToScreen(landmark.x, landmark.y);
+    const type = landmarkTypes[landmark.type];
+    ctx.save();
+    ctx.fillStyle = landmark.looted ? "rgba(122, 104, 76, 0.22)" : "rgba(216, 183, 95, 0.2)";
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y + 20, landmark.radius * 0.72, landmark.radius * 0.34, -0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = landmark.discovered ? "rgba(216, 183, 95, 0.48)" : "rgba(237, 242, 223, 0.25)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([10, 8]);
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y + 20, landmark.radius * 0.74, landmark.radius * 0.36, -0.08, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    drawLandmarkDetails(landmark);
+    if (!landmark.looted) {
+      const marker = worldToScreen(landmark.x, landmark.y - 106);
+      ctx.fillStyle = landmark.discovered ? type.marker : "rgba(237, 242, 223, 0.7)";
+      ctx.beginPath();
+      ctx.moveTo(marker.x, marker.y - 7);
+      ctx.lineTo(marker.x + 7, marker.y);
+      ctx.lineTo(marker.x, marker.y + 7);
+      ctx.lineTo(marker.x - 7, marker.y);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 }
 
@@ -2604,6 +3322,18 @@ function drawSafeZoneCamp(zone) {
       drawPropImage("tent", zone.x + 92, zone.y - 26, 82);
       drawPropImage("barrel", zone.x - 8, zone.y + 82, 34);
     }
+    if (isMainBase && stage >= 1) {
+      drawPropImage("barrel", zone.x + 74, zone.y + 34, 36);
+      drawPropImage("chest", zone.x + 102, zone.y + 42, 40);
+      const bench = worldToScreen(zone.x + 76, zone.y + 56);
+      ctx.save();
+      ctx.fillStyle = "#7b4f2e";
+      ctx.fillRect(Math.floor(bench.x - 28), Math.floor(bench.y - 8), 56, 12);
+      ctx.fillStyle = "#452f23";
+      ctx.fillRect(Math.floor(bench.x - 22), Math.floor(bench.y + 4), 6, 18);
+      ctx.fillRect(Math.floor(bench.x + 16), Math.floor(bench.y + 4), 6, 18);
+      ctx.restore();
+    }
     if (isMainBase && stage >= 3) {
       drawPropImage("watchtower", zone.x - zone.radius + 34, zone.y - 22, 74);
       drawPropImage("watchtower", zone.x + zone.radius - 34, zone.y - 22, 74, 1, true);
@@ -2695,6 +3425,19 @@ function drawLootIcon(kind, x, y, size = 1) {
     ctx.fillRect(-3, -3, 6, 6);
     ctx.fillRect(-12, -2, 24, 4);
     ctx.fillRect(-2, -12, 4, 24);
+  } else if (kind === "stone") {
+    ctx.fillStyle = "#8e938b";
+    ctx.beginPath();
+    ctx.moveTo(-11, 3);
+    ctx.lineTo(-5, -9);
+    ctx.lineTo(8, -8);
+    ctx.lineTo(13, 2);
+    ctx.lineTo(5, 9);
+    ctx.lineTo(-8, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#b8beb5";
+    ctx.fillRect(-3, -5, 8, 4);
   } else if (kind === "med") {
     ctx.fillStyle = "#dfe8dc";
     ctx.fillRect(-10, -8, 20, 16);
@@ -3006,6 +3749,30 @@ function drawPrompt() {
   ctx.fillText(world.lootPrompt.label, Math.floor(s.x), Math.floor(s.y + 4));
 }
 
+function drawSearchProgress() {
+  const search = world.activeSearch;
+  if (!search) return;
+  const s = worldToScreen(player.x, player.y - player.z - 82);
+  const width = 92;
+  const height = 9;
+  const progress = clamp(search.elapsed / search.duration, 0, 1);
+  ctx.save();
+  ctx.fillStyle = "rgba(12, 16, 16, 0.86)";
+  drawScreenRoundRect(Math.floor(s.x - width / 2), Math.floor(s.y), width, height + 18, 5);
+  ctx.fill();
+  ctx.fillStyle = "#edf2df";
+  ctx.font = "bold 10px Segoe UI, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(search.label, Math.floor(s.x), Math.floor(s.y + 10));
+  ctx.fillStyle = "#222c2a";
+  ctx.fillRect(Math.floor(s.x - width / 2 + 7), Math.floor(s.y + 15), width - 14, height);
+  ctx.fillStyle = "#d8b75f";
+  ctx.fillRect(Math.floor(s.x - width / 2 + 7), Math.floor(s.y + 15), Math.floor((width - 14) * progress), height);
+  ctx.strokeStyle = "rgba(237, 242, 223, 0.24)";
+  ctx.strokeRect(Math.floor(s.x - width / 2 + 7), Math.floor(s.y + 15), width - 14, height);
+  ctx.restore();
+}
+
 function drawMinimap() {
   const size = 132;
   const x = 18;
@@ -3090,6 +3857,21 @@ function drawMinimap() {
     ctx.fillStyle = structure.looted ? "rgba(216, 183, 95, 0.46)" : "#d8b75f";
     ctx.fillRect(Math.floor(sx - 2), Math.floor(sy - 2), 4, 4);
   }
+  for (const landmark of majorLandmarks) {
+    if (!landmark.discovered || !isFogRevealedAt(landmark.x, landmark.y)) continue;
+    const landmarkMini = worldToMini(landmark.x, landmark.y);
+    const lx = landmarkMini.x;
+    const ly = landmarkMini.y;
+    if (lx < x + 4 || lx > x + size - 4 || ly < y + 4 || ly > y + size - 4) continue;
+    ctx.fillStyle = landmark.looted ? "rgba(237, 242, 223, 0.62)" : landmarkTypes[landmark.type].marker;
+    ctx.beginPath();
+    ctx.moveTo(Math.floor(lx), Math.floor(ly - 4));
+    ctx.lineTo(Math.floor(lx + 4), Math.floor(ly));
+    ctx.lineTo(Math.floor(lx), Math.floor(ly + 4));
+    ctx.lineTo(Math.floor(lx - 4), Math.floor(ly));
+    ctx.closePath();
+    ctx.fill();
+  }
   for (const zombie of zombies) {
     if (!isFogRevealedAt(zombie.x, zombie.y) || !isCurrentlyVisibleAt(zombie.x, zombie.y)) continue;
     const zombieMini = worldToMini(zombie.x, zombie.y);
@@ -3122,6 +3904,14 @@ function initInput() {
     const inputKey = event.code === "Space" ? " " : key;
     if (["w", "a", "s", "d", "e", "f", "m", "r", "b", "p", "escape", "1", "2", "3", " ", "shift", "control"].includes(inputKey)) event.preventDefault();
     if (key === "escape" || key === "p") {
+      if (!ui.craftingMenu.hidden) {
+        closeCraftingMenu();
+        return;
+      }
+      if (world.state === "paused" && !ui.settingsPanel.hidden) {
+        closeSettingsPanel();
+        return;
+      }
       togglePause();
       return;
     }
@@ -3129,7 +3919,7 @@ function initInput() {
       ui.adminMenu.hidden = !ui.adminMenu.hidden;
       return;
     }
-    if (world.state !== "playing") return;
+    if (world.state !== "playing" || world.craftingOpen) return;
     if (event.code === "Space") jumpPlayer();
     if (key === "e") lootNearby();
     if (key === "f") {
@@ -3160,7 +3950,8 @@ function initInput() {
 
   window.addEventListener("mousedown", (event) => {
     if (world.state !== "playing") return;
-    if (event.target.closest(".panel, .death-screen, .menu-screen")) return;
+    if (event.target.closest(".panel, .death-screen, .menu-screen, .crafting-menu")) return;
+    if (world.activeSearch) return;
     if (event.button === 0) {
       mouse.down = true;
       shoot();
@@ -3187,12 +3978,41 @@ function initInput() {
   ui.resumeButton.addEventListener("click", resumeGame);
   ui.saveGameButton.addEventListener("click", saveFromPause);
   ui.pauseLoadButton.addEventListener("click", loadGameFromMenu);
+  ui.settingsButton.addEventListener("click", openSettingsPanel);
+  ui.settingsBackButton.addEventListener("click", closeSettingsPanel);
+  ui.musicVolumeSlider.addEventListener("input", () => {
+    settings.musicVolume = Number(ui.musicVolumeSlider.value) / 100;
+    settings.musicMuted = settings.musicVolume <= 0;
+    syncSettingsUi();
+    updateMusicVolumes();
+    saveSettings();
+  });
+  ui.sfxVolumeSlider.addEventListener("input", () => {
+    settings.sfxVolume = Number(ui.sfxVolumeSlider.value) / 100;
+    settings.sfxMuted = settings.sfxVolume <= 0;
+    syncSettingsUi();
+    saveSettings();
+  });
+  ui.muteMusicButton.addEventListener("click", () => {
+    settings.musicMuted = !settings.musicMuted;
+    syncSettingsUi();
+    updateMusicVolumes();
+    saveSettings();
+  });
+  ui.muteSfxButton.addEventListener("click", () => {
+    settings.sfxMuted = !settings.sfxMuted;
+    syncSettingsUi();
+    saveSettings();
+  });
+  ui.craftingCloseButton.addEventListener("click", closeCraftingMenu);
+  ui.craftAxeButton.addEventListener("click", () => craftTool("axe"));
+  ui.craftPickaxeButton.addEventListener("click", () => craftTool("pickaxe"));
   ui.pauseNewButton.addEventListener("click", openNewGameMenu);
   ui.quitGameButton.addEventListener("click", quitToMainMenu);
   ui.characterButtons.forEach((button) => {
     button.addEventListener("click", () => setSelectedCharacter(button.dataset.character));
   });
-  [ui.upgradePanel, ui.adminMenu, ui.deathScreen, ui.mainMenu, ui.pauseMenu].forEach((element) => {
+  [ui.upgradePanel, ui.adminMenu, ui.craftingMenu, ui.deathScreen, ui.mainMenu, ui.pauseMenu].forEach((element) => {
     element.addEventListener("mousedown", (event) => event.stopPropagation());
     element.addEventListener("mouseup", (event) => event.stopPropagation());
   });
@@ -3213,9 +4033,11 @@ function init() {
   loadSpriteSheets();
   loadTerrainAssets();
   configureMusic();
+  loadSettings();
   initInput();
   applyBaseStats();
   applyTechStats();
+  resetLandmarks();
   player.armor = player.maxArmor;
   player.ammo = weapons[player.weaponIndex].clip;
   player.reserveAmmo = player.ammoCap;

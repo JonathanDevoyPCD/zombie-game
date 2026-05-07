@@ -65,6 +65,24 @@
       </div>
     </div>
 
+    <div class="crafting-menu" id="craftingMenu" hidden>
+      <header>
+        <span>Workbench</span>
+        <strong>Crafting</strong>
+        <button id="craftingCloseButton" type="button" aria-label="Close crafting">X</button>
+      </header>
+      <div class="crafting-list">
+        <button id="craftAxeButton" type="button">
+          <strong>Craft Axe</strong>
+          <small>Harvest trees for wood - 35 wood, 20 scrap</small>
+        </button>
+        <button id="craftPickaxeButton" type="button">
+          <strong>Craft Pickaxe</strong>
+          <small>Harvest stone from rocks - 45 wood, 30 scrap, 8 parts</small>
+        </button>
+      </div>
+    </div>
+
     <div class="menu-screen" id="mainMenu">
       <div class="menu-card">
         <span>Dead Grid</span>
@@ -94,8 +112,24 @@
           <button id="resumeButton" type="button">Resume</button>
           <button id="saveGameButton" type="button">Save Game</button>
           <button id="pauseLoadButton" type="button">Load Game</button>
+          <button id="settingsButton" type="button">Settings</button>
           <button id="pauseNewButton" type="button">Start New Game</button>
           <button id="quitGameButton" type="button">Quit Game</button>
+        </div>
+        <div class="settings-panel" id="settingsPanel" hidden>
+          <label>
+            <span>Music Volume</span>
+            <input id="musicVolumeSlider" type="range" min="0" max="100" value="20" />
+          </label>
+          <label>
+            <span>Sound FX Volume</span>
+            <input id="sfxVolumeSlider" type="range" min="0" max="100" value="80" />
+          </label>
+          <div class="settings-actions">
+            <button id="muteMusicButton" type="button">Mute Music</button>
+            <button id="muteSfxButton" type="button">Mute SFX</button>
+          </div>
+          <button id="settingsBackButton" type="button">Back</button>
         </div>
       </div>
     </div>
@@ -108,6 +142,6 @@
       </div>
     </div>
 
-    <script src="game.js?v=music-direct-1"></script>
+    <script src="game.js?v=systems-1"></script>
   </body>
 </html>

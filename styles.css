@@ -184,7 +184,7 @@ button:disabled {
   bottom: 208px;
   z-index: 5;
   display: grid;
-  width: min(260px, calc(100vw - 36px));
+  width: min(330px, calc(100vw - 36px));
   min-height: auto;
   grid-template-columns: 92px 1fr;
   gap: 4px 8px;
@@ -357,6 +357,72 @@ button:disabled {
   pointer-events: auto;
 }
 
+.crafting-menu {
+  position: fixed;
+  right: 16px;
+  top: 92px;
+  z-index: 7;
+  width: min(340px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.crafting-menu[hidden] {
+  display: none;
+}
+
+.crafting-menu header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.crafting-menu header span {
+  grid-column: 1;
+  color: var(--yellow);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.crafting-menu header strong {
+  grid-column: 1;
+  font-size: 20px;
+}
+
+#craftingCloseButton {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+}
+
+.crafting-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.crafting-list button {
+  display: grid;
+  gap: 4px;
+  min-height: 68px;
+  padding: 10px;
+  text-align: left;
+}
+
+.crafting-list small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .admin-menu[hidden] {
   display: none;
 }
@@ -526,6 +592,42 @@ button:disabled {
 
 .menu-actions button {
   min-height: 46px;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  text-align: left;
+}
+
+.settings-panel[hidden] {
+  display: none;
+}
+
+.settings-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.settings-panel input[type="range"] {
+  width: 100%;
+  accent-color: var(--yellow);
+}
+
+.settings-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-actions button,
+#settingsBackButton {
+  min-height: 40px;
 }
 
 .death-screen {
