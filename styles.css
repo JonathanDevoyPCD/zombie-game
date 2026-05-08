@@ -222,7 +222,7 @@ button:disabled {
   text-align: left;
 }
 
-.inventory #inventoryText, #vitalsText, #infoText {
+.inventory .inventory-title, #vitalsText, #infoText {
   color: #dce8cc;
   font-size: 12px;
   font-weight: 800;
@@ -463,6 +463,174 @@ button:disabled {
 
 .crafting-menu[hidden] {
   display: none;
+}
+
+.inventory-menu {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 8;
+  width: min(430px, calc(100vw - 32px));
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.inventory-menu[hidden] {
+  display: none;
+}
+
+.inventory-menu header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inventory-menu header span {
+  grid-column: 1;
+  color: var(--yellow);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.inventory-menu header strong {
+  grid-column: 1;
+  font-size: 20px;
+}
+
+#inventoryCloseButton {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.inventory-slot {
+  display: grid;
+  min-height: 84px;
+  gap: 5px;
+  align-content: center;
+  justify-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  text-align: center;
+}
+
+.inventory-slot.filled {
+  color: var(--text);
+  background: rgba(245, 245, 245, 0.08);
+}
+
+.inventory-slot strong {
+  font-size: 12px;
+}
+
+.inventory-slot small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.inventory-icon {
+  width: 34px;
+  height: 34px;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.inventory-icon.scrap,
+.inventory-icon.wood,
+.inventory-icon.stone,
+.inventory-icon.parts {
+  width: 38px;
+  height: 38px;
+}
+
+.inventory-icon.scrap { background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Treasure Chest.png"); }
+.inventory-icon.wood { background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Stump Short.png"); }
+.inventory-icon.stone { background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Rock 01.png"); }
+.inventory-icon.parts { background-image: url("sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Cart.png"); }
+.inventory-icon.ammo {
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, #d8b75f 0 65%, #79513a 65% 100%) center / 24px 8px no-repeat;
+}
+.inventory-icon.axe {
+  background:
+    linear-gradient(35deg, transparent 0 42%, #9f7b43 42% 57%, transparent 57% 100%),
+    linear-gradient(135deg, transparent 0 36%, #b7c4bd 36% 64%, transparent 64% 100%);
+}
+.inventory-icon.pickaxe {
+  background:
+    linear-gradient(90deg, transparent 0 42%, #9f7b43 42% 57%, transparent 57% 100%),
+    linear-gradient(20deg, transparent 0 25%, #b7c4bd 25% 75%, transparent 75% 100%);
+}
+
+.save-slot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.save-slot-list[hidden] {
+  display: none;
+}
+
+.save-slot-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  text-align: left;
+}
+
+.save-slot-card.active {
+  border-color: rgba(216, 183, 95, 0.72);
+  background: rgba(216, 183, 95, 0.08);
+}
+
+.save-slot-card strong {
+  display: block;
+  font-size: 14px;
+}
+
+.save-slot-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.save-slot-actions {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 6px;
+}
+
+.save-slot-actions button {
+  min-height: 32px;
+  padding: 0 9px;
+  font-size: 12px;
 }
 
 .crafting-menu header {

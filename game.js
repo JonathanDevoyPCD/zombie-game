@@ -31,11 +31,14 @@ const ui = {
   adminTimeButtons: document.querySelectorAll("[data-time]"),
   mainMenu: document.getElementById("mainMenu"),
   pauseMenu: document.getElementById("pauseMenu"),
-  newGameButton: document.getElementById("newGameButton"),
   loadGameButton: document.getElementById("loadGameButton"),
+  loadSavesButton: document.getElementById("loadSavesButton"),
+  saveSlotList: document.getElementById("saveSlotList"),
+  pauseSaveSlotList: document.getElementById("pauseSaveSlotList"),
   resumeButton: document.getElementById("resumeButton"),
   saveGameButton: document.getElementById("saveGameButton"),
   pauseLoadButton: document.getElementById("pauseLoadButton"),
+  pauseLoadSavesButton: document.getElementById("pauseLoadSavesButton"),
   settingsButton: document.getElementById("settingsButton"),
   settingsPanel: document.getElementById("settingsPanel"),
   settingsBackButton: document.getElementById("settingsBackButton"),
@@ -47,6 +50,9 @@ const ui = {
   craftingCloseButton: document.getElementById("craftingCloseButton"),
   craftAxeButton: document.getElementById("craftAxeButton"),
   craftPickaxeButton: document.getElementById("craftPickaxeButton"),
+  inventoryMenu: document.getElementById("inventoryMenu"),
+  inventoryGrid: document.getElementById("inventoryGrid"),
+  inventoryCloseButton: document.getElementById("inventoryCloseButton"),
   pauseNewButton: document.getElementById("pauseNewButton"),
   quitGameButton: document.getElementById("quitGameButton"),
   characterButtons: document.querySelectorAll(".character-option"),
@@ -81,6 +87,9 @@ const SUMMER_GROUND_TILE_SIZE = 192;
 const DAY_LENGTH = 420;
 const MUSIC_VERSION = "direct-1";
 const SETTINGS_KEY = "dead-grid-settings-v1";
+const SAVE_KEY_BASE = "dead-grid-save-v2-slot-";
+const LEGACY_SAVE_KEY = "dead-grid-save-v1";
+const SAVE_SLOT_COUNT = 3;
 const FOG_CELL_SIZE = 160;
 const FOG_REVEAL_RADIUS = 430;
 const FOG_SAFE_RADIUS = 230;
@@ -274,6 +283,7 @@ const player = {
 };
 
 let selectedCharacter = "male";
+let activeSaveSlot = 1;
 
 const world = {
   time: DAY_LENGTH * 0.35,
@@ -282,8 +292,11 @@ const world = {
   nextDropId: 1,
   messageTimer: 0,
   lootPrompt: null,
+  approachLabel: null,
   activeSearch: null,
   craftingOpen: false,
+  inventoryOpen: false,
+  inventoryReturnState: "playing",
   questIndex: 0,
   baseLevel: 0,
   harvestClock: 0,
@@ -291,7 +304,6 @@ const world = {
   state: "menu"
 };
 
-const SAVE_KEY = "dead-grid-save-v1";
 const SAFE_ZONE_RADIUS = 86;
 const safeZones = [
   { id: "base", name: "Base Camp", x: 0, y: 0, radius: SAFE_ZONE_RADIUS },
@@ -334,8 +346,10 @@ const landmarkDefinitions = [
     y: -860,
     radius: 185,
     revealRadius: 760,
+    event: "medicalCache",
     discoveryReward: { xp: 45, parts: 6, med: 40 },
-    lootReward: { parts: 18, scrap: 85, med: 70 }
+    lootReward: { parts: 18, scrap: 85, med: 70 },
+    clearReward: { xp: 35, med: 55 }
   },
   {
     id: "ridge-radio",
@@ -345,8 +359,10 @@ const landmarkDefinitions = [
     y: -940,
     radius: 175,
     revealRadius: 1180,
+    event: "signalBoost",
     discoveryReward: { xp: 60, parts: 10, scrap: 45 },
-    lootReward: { parts: 28, scrap: 70, ammo: 30 }
+    lootReward: { parts: 28, scrap: 70, ammo: 30 },
+    clearReward: { xp: 55, parts: 12 }
   },
   {
     id: "south-checkpoint",
@@ -356,8 +372,10 @@ const landmarkDefinitions = [
     y: 850,
     radius: 180,
     revealRadius: 820,
+    event: "ambush",
     discoveryReward: { xp: 45, ammo: 24, scrap: 50 },
-    lootReward: { ammo: 65, scrap: 95, parts: 12 }
+    lootReward: { ammo: 65, scrap: 95, parts: 12 },
+    clearReward: { xp: 45, ammo: 28 }
   },
   {
     id: "broken-convoy",
@@ -367,8 +385,10 @@ const landmarkDefinitions = [
     y: 690,
     radius: 190,
     revealRadius: 840,
+    event: "rareCrate",
     discoveryReward: { xp: 50, scrap: 70, parts: 8 },
-    lootReward: { scrap: 135, parts: 24, ammo: 36 }
+    lootReward: { scrap: 135, parts: 24, ammo: 36 },
+    clearReward: { xp: 60, parts: 18 }
   },
   {
     id: "green-acre-farm",
@@ -378,8 +398,10 @@ const landmarkDefinitions = [
     y: 1510,
     radius: 205,
     revealRadius: 780,
+    event: "woodCache",
     discoveryReward: { xp: 42, wood: 95, med: 24 },
-    lootReward: { wood: 190, scrap: 55, ammo: 24 }
+    lootReward: { wood: 190, scrap: 55, ammo: 24 },
+    clearReward: { xp: 38, wood: 120 }
   },
   {
     id: "sealed-bunker",
@@ -389,8 +411,11 @@ const landmarkDefinitions = [
     y: 1340,
     radius: 170,
     revealRadius: 700,
+    event: "locked",
+    lockedUntilBase: 2,
     discoveryReward: { xp: 75, parts: 18 },
-    lootReward: { parts: 45, scrap: 120, ammo: 55 }
+    lootReward: { parts: 45, scrap: 120, ammo: 55 },
+    clearReward: { xp: 90, parts: 28 }
   }
 ];
 
@@ -896,6 +921,62 @@ function closeCraftingMenu() {
   ui.craftingMenu.hidden = true;
 }
 
+function inventoryItems() {
+  return [
+    { id: "scrap", name: "Scrap", amount: player.scrap, icon: "scrap" },
+    { id: "wood", name: "Wood", amount: player.wood, icon: "wood" },
+    { id: "stone", name: "Stone", amount: player.stone, icon: "stone" },
+    { id: "parts", name: "Parts", amount: player.parts, icon: "parts" },
+    { id: "ammo", name: "Ammo", amount: player.reserveAmmo, icon: "ammo" },
+    player.tools.axe ? { id: "axe", name: "Axe", amount: "Tool", icon: "axe" } : null,
+    player.tools.pickaxe ? { id: "pickaxe", name: "Pickaxe", amount: "Tool", icon: "pickaxe" } : null
+  ].filter(Boolean);
+}
+
+function updateInventoryMenu() {
+  if (!ui.inventoryGrid) return;
+  ui.inventoryGrid.innerHTML = "";
+  const items = inventoryItems();
+  for (let i = 0; i < 16; i += 1) {
+    const item = items[i];
+    const slot = document.createElement("div");
+    slot.className = `inventory-slot${item ? " filled" : ""}`;
+    if (item) {
+      slot.innerHTML = `
+        <span class="inventory-icon ${item.icon}" aria-hidden="true"></span>
+        <strong>${item.name}</strong>
+        <small>${item.amount}</small>
+      `;
+    } else {
+      slot.innerHTML = "<small>Empty</small>";
+    }
+    ui.inventoryGrid.append(slot);
+  }
+}
+
+function openInventoryMenu() {
+  if (world.state !== "playing") return;
+  world.inventoryReturnState = world.state;
+  if (world.state === "playing") world.state = "paused";
+  world.inventoryOpen = true;
+  ui.inventoryMenu.hidden = false;
+  updateInventoryMenu();
+  mouse.down = false;
+  keys.clear();
+}
+
+function closeInventoryMenu() {
+  const shouldResume = world.state === "paused" && world.inventoryOpen && world.inventoryReturnState === "playing" && ui.pauseMenu.hidden;
+  world.inventoryOpen = false;
+  ui.inventoryMenu.hidden = true;
+  if (shouldResume) world.state = "playing";
+}
+
+function toggleInventoryMenu() {
+  if (world.inventoryOpen) closeInventoryMenu();
+  else openInventoryMenu();
+}
+
 function craftTool(kind) {
   const recipe = toolRecipes[kind];
   if (!recipe || player.tools[kind]) return;
@@ -916,13 +997,16 @@ function resetLandmarks() {
     majorLandmarks.push({
       ...landmark,
       discovered: false,
-      looted: false
+      searched: false,
+      looted: false,
+      cleared: false,
+      eventTriggered: false
     });
   });
 }
 
 function landmarkRewardText(rewards) {
-  return Object.entries(rewards)
+  const text = Object.entries(rewards || {})
     .filter(([, amount]) => amount > 0)
     .map(([kind, amount]) => {
       if (kind === "med") return "patched wounds";
@@ -930,6 +1014,7 @@ function landmarkRewardText(rewards) {
       return `${amount} ${kind}`;
     })
     .join(", ");
+  return text || "route marked";
 }
 
 function applyLandmarkReward(rewards) {
@@ -955,13 +1040,57 @@ function discoverLandmark(landmark) {
   return true;
 }
 
+function isLandmarkLocked(landmark) {
+  return landmark?.lockedUntilBase && world.baseLevel < landmark.lockedUntilBase;
+}
+
+function triggerLandmarkEvent(landmark) {
+  if (!landmark || landmark.eventTriggered) return;
+  landmark.eventTriggered = true;
+  if (landmark.event === "ambush") {
+    spawnLandmarkAmbush(landmark, 5);
+    flash(`${landmark.name}: ambush triggered`);
+    return;
+  }
+  if (landmark.event === "rareCrate") {
+    spawnDrop(landmark.x + 62, landmark.y + 44, "parts", 18);
+    spawnDrop(landmark.x + 88, landmark.y + 28, "ammo", 45);
+    flash(`${landmark.name}: rare cache marked`);
+    return;
+  }
+  if (landmark.event === "signalBoost") {
+    revealFogCircle(landmark.x, landmark.y, landmark.revealRadius * 1.35);
+    flash(`${landmark.name}: signal expanded the map`);
+    return;
+  }
+  if (landmark.event === "medicalCache") {
+    player.hp = player.maxHp;
+    flash(`${landmark.name}: medical station restored health`);
+    return;
+  }
+  if (landmark.event === "woodCache") {
+    addResource("wood", 80);
+    flash(`${landmark.name}: found stacked lumber`);
+  }
+}
+
 function lootLandmark(landmark) {
   if (!landmark || landmark.looted) return false;
   if (!landmark.discovered) discoverLandmark(landmark);
+  if (isLandmarkLocked(landmark)) {
+    flash(`${landmark.name} locked - upgrade base to ${baseStages[landmark.lockedUntilBase].name}`);
+    return false;
+  }
+  triggerLandmarkEvent(landmark);
+  landmark.searched = true;
   landmark.looted = true;
   applyLandmarkReward(landmark.lootReward);
+  if (!landmark.cleared) {
+    landmark.cleared = true;
+    applyLandmarkReward(landmark.clearReward);
+  }
   addHitParticles(landmark.x, landmark.y, landmarkTypes[landmark.type].marker, 24);
-  flash(`${landmark.name}: ${landmarkRewardText(landmark.lootReward)}`);
+  flash(`${landmark.name} cleared: ${landmarkRewardText({ ...landmark.lootReward, ...landmark.clearReward })}`);
   rebuildUpgradePanel();
   updateQuestProgress();
   saveProgress();
@@ -1603,6 +1732,44 @@ function spawnZombie() {
   });
 }
 
+function spawnLandmarkAmbush(landmark, count = 4) {
+  const zone = Math.max(2, Math.floor(Math.hypot(landmark.x, landmark.y) / 430) + 1);
+  for (let i = 0; i < count; i += 1) {
+    const angle = (Math.PI * 2 * i) / count + rand(-0.35, 0.35);
+    const radius = rand(115, 170);
+    const x = landmark.x + Math.cos(angle) * radius;
+    const y = landmark.y + Math.sin(angle) * radius;
+    if (!canStandAt(x, y) || isInAnySafeZone(x, y, 180)) continue;
+    const type = i === 0 && zone >= 4 ? "brute" : i % 2 === 0 ? "runner" : "walker";
+    const profile = {
+      walker: { hp: 38, speed: 78, damage: 12, size: 15, color: "#5f8f45" },
+      runner: { hp: 30, speed: 132, damage: 10, size: 13, color: "#7aa354" },
+      brute: { hp: 95, speed: 62, damage: 22, size: 22, color: "#486f3b" }
+    }[type];
+    const scale = 1 + zone * 0.12;
+    zombies.push({
+      x,
+      y,
+      type,
+      spriteSet: zombieSetKeys[Math.floor(Math.random() * zombieSetKeys.length)],
+      facing: x < player.x ? 1 : -1,
+      radius: profile.size,
+      hp: Math.round(profile.hp * scale),
+      maxHp: Math.round(profile.hp * scale),
+      speed: profile.speed * (1 + zone * 0.03),
+      damage: Math.round(profile.damage * scale),
+      color: profile.color,
+      attackCooldown: 0,
+      hitFlash: 0,
+      aggro: true,
+      alertTimer: 8,
+      wanderAngle: rand(0, Math.PI * 2),
+      wanderTimer: rand(0.8, 2.4),
+      detectRange: 320
+    });
+  }
+}
+
 function shoot() {
   const weapon = weapons[player.weaponIndex];
   if (!weapon.unlock() || player.reloading > 0 || !player.alive) return;
@@ -1705,6 +1872,10 @@ function lootNearby() {
 
   for (const landmark of majorLandmarks) {
     if (!landmark.looted && dist(player.x, player.y, landmark.x, landmark.y) < 112) {
+      if (isLandmarkLocked(landmark)) {
+        flash(`${landmark.name} locked - upgrade base to ${baseStages[landmark.lockedUntilBase].name}`);
+        return;
+      }
       beginSearch({
         kind: "landmark",
         label: `Searching ${landmark.name}`,
@@ -1782,8 +1953,71 @@ function gainXp(amount) {
   }
 }
 
-function saveProgress() {
-  const data = {
+function saveKey(slot = activeSaveSlot) {
+  return `${SAVE_KEY_BASE}${slot}`;
+}
+
+function readSaveSlot(slot) {
+  const key = slot === 1 && !localStorage.getItem(saveKey(slot)) && localStorage.getItem(LEGACY_SAVE_KEY)
+    ? LEGACY_SAVE_KEY
+    : saveKey(slot);
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(key);
+    return null;
+  }
+}
+
+function writeSaveSlot(slot, data) {
+  localStorage.setItem(saveKey(slot), JSON.stringify({
+    ...data,
+    meta: {
+      ...(data.meta || {}),
+      slot,
+      savedAt: Date.now(),
+      version: 2
+    }
+  }));
+}
+
+function deleteSaveSlot(slot) {
+  localStorage.removeItem(saveKey(slot));
+  if (slot === 1) localStorage.removeItem(LEGACY_SAVE_KEY);
+  updateMenuButtons();
+}
+
+function saveSlots() {
+  return Array.from({ length: SAVE_SLOT_COUNT }, (_, index) => index + 1);
+}
+
+function saveSummary(slot) {
+  const data = readSaveSlot(slot);
+  if (!data) return null;
+  const savedPlayer = data.player || {};
+  const savedWorld = data.world || {};
+  const savedAt = Number(data.meta?.savedAt) || 0;
+  return {
+    slot,
+    savedAt,
+    character: validCharacter(savedPlayer.character),
+    level: Number(data.level) || 1,
+    base: baseStages[clamp(Number(savedWorld.baseLevel) || 0, 0, baseStages.length - 1)].name,
+    distance: Math.round(Math.hypot(Number(savedPlayer.x) || 0, Number(savedPlayer.y) || 0))
+  };
+}
+
+function latestSaveSlot() {
+  return saveSlots()
+    .map(saveSummary)
+    .filter(Boolean)
+    .sort((a, b) => b.savedAt - a.savedAt)[0]?.slot || 1;
+}
+
+function buildSaveData() {
+  return {
     scrap: player.scrap,
     wood: player.wood,
     stone: player.stone,
@@ -1856,7 +2090,10 @@ function saveProgress() {
     landmarks: majorLandmarks.map((landmark) => ({
       id: landmark.id,
       discovered: landmark.discovered,
-      looted: landmark.looted
+      searched: landmark.searched,
+      looted: landmark.looted,
+      cleared: landmark.cleared,
+      eventTriggered: landmark.eventTriggered
     })),
     drops: drops.map((drop) => ({
       id: drop.id,
@@ -1868,15 +2105,18 @@ function saveProgress() {
       ttl: drop.ttl
     }))
   };
-  localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+}
+
+function saveProgress() {
+  writeSaveSlot(activeSaveSlot, buildSaveData());
   updateMenuButtons();
 }
 
-function loadProgress() {
+function loadProgress(slot = activeSaveSlot) {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
-    const data = JSON.parse(raw);
+    const data = readSaveSlot(slot);
+    if (!data) return false;
+    activeSaveSlot = slot;
     player.scrap = Number(data.scrap) || 0;
     player.wood = Number(data.wood) || 0;
     player.stone = Number(data.stone) || 0;
@@ -1916,6 +2156,7 @@ function loadProgress() {
     world.harvestClock = Number(data.world?.harvestClock ?? data.world?.time) || 0;
     world.activeSearch = null;
     closeCraftingMenu();
+    closeInventoryMenu();
     applyBaseStats();
     revealedFog.clear();
     (Array.isArray(data.fog) ? data.fog : []).forEach((key) => {
@@ -1956,7 +2197,10 @@ function loadProgress() {
     majorLandmarks.forEach((landmark) => {
       const state = landmarkStates.get(landmark.id);
       landmark.discovered = Boolean(state?.discovered);
+      landmark.searched = Boolean(state?.searched || state?.looted);
       landmark.looted = Boolean(state?.looted);
+      landmark.cleared = Boolean(state?.cleared || state?.looted);
+      landmark.eventTriggered = Boolean(state?.eventTriggered || state?.looted);
       if (landmark.discovered) revealFogCircle(landmark.x, landmark.y, landmark.revealRadius);
     });
     (data.drops || []).forEach((drop) => drops.push({
@@ -1968,20 +2212,23 @@ function loadProgress() {
     rebuildUpgradePanel();
     updateHud();
     updateCamera(1);
+    updateMenuButtons();
     return true;
   } catch {
-    localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(saveKey(slot));
     updateMenuButtons();
     return false;
   }
 }
 
-function hasSave() {
-  return Boolean(localStorage.getItem(SAVE_KEY));
+function hasSave(slot = null) {
+  if (slot) return Boolean(readSaveSlot(slot));
+  return saveSlots().some((candidate) => Boolean(readSaveSlot(candidate)));
 }
 
-function clearProgress() {
-  localStorage.removeItem(SAVE_KEY);
+function clearProgress(slot = activeSaveSlot) {
+  deleteSaveSlot(slot);
+  activeSaveSlot = slot;
   Object.values(tech).forEach((item) => {
     item.level = 0;
   });
@@ -2005,6 +2252,7 @@ function clearProgress() {
   world.baseLevel = 0;
   world.activeSearch = null;
   closeCraftingMenu();
+  closeInventoryMenu();
   world.time = DAY_LENGTH * 0.35;
   world.nextSpawn = 0;
   world.nextCrate = 0;
@@ -2074,6 +2322,7 @@ function restartRun(showMessage = true) {
   drops.length = 0;
   world.activeSearch = null;
   closeCraftingMenu();
+  closeInventoryMenu();
   ui.deathScreen.hidden = true;
   ensureWorldPopulated();
   if (showMessage) flash("Back at base");
@@ -2092,24 +2341,27 @@ function updateCharacterSelection() {
   });
 }
 
-function startGame(fromSave = false) {
-  if (fromSave && !loadProgress()) {
+function startGame(fromSave = false, slot = activeSaveSlot) {
+  activeSaveSlot = slot;
+  if (fromSave && !loadProgress(slot)) {
     flash("No save found");
     return;
   }
   if (!fromSave) {
-    clearProgress();
+    clearProgress(slot);
   }
   world.state = "playing";
   ui.mainMenu.hidden = true;
   ui.pauseMenu.hidden = true;
   ui.settingsPanel.hidden = true;
   closeCraftingMenu();
+  closeInventoryMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   startMusic();
   updateHud();
-  flash(fromSave ? "Save loaded" : "New run started");
+  if (!fromSave) saveProgress();
+  flash(fromSave ? `Slot ${slot} loaded` : `New run started in Slot ${slot}`);
 }
 
 function openNewGameMenu() {
@@ -2119,6 +2371,7 @@ function openNewGameMenu() {
   ui.pauseMenu.hidden = true;
   ui.settingsPanel.hidden = true;
   closeCraftingMenu();
+  closeInventoryMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   stopMusic();
@@ -2131,6 +2384,7 @@ function pauseGame() {
   ui.pauseMenu.hidden = false;
   closeSettingsPanel();
   closeCraftingMenu();
+  closeInventoryMenu();
   mouse.down = false;
   keys.clear();
   updateMenuButtons();
@@ -2149,8 +2403,8 @@ function togglePause() {
   else if (world.state === "paused") resumeGame();
 }
 
-function loadGameFromMenu() {
-  if (!loadProgress()) {
+function loadGameFromMenu(slot = latestSaveSlot()) {
+  if (!loadProgress(slot)) {
     flash("No save found");
     return;
   }
@@ -2159,15 +2413,16 @@ function loadGameFromMenu() {
   ui.pauseMenu.hidden = true;
   ui.settingsPanel.hidden = true;
   closeCraftingMenu();
+  closeInventoryMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   startMusic();
-  flash("Save loaded");
+  flash(`Slot ${slot} loaded`);
 }
 
 function saveFromPause() {
   saveProgress();
-  flash("Game saved");
+  flash(`Slot ${activeSaveSlot} saved`);
 }
 
 function quitToMainMenu() {
@@ -2178,6 +2433,7 @@ function quitToMainMenu() {
   ui.pauseMenu.hidden = true;
   ui.settingsPanel.hidden = true;
   closeCraftingMenu();
+  closeInventoryMenu();
   ui.deathScreen.hidden = true;
   mouse.down = false;
   stopMusic();
@@ -2188,6 +2444,100 @@ function updateMenuButtons() {
   const enabled = hasSave();
   ui.loadGameButton.disabled = !enabled;
   ui.pauseLoadButton.disabled = !enabled;
+  ui.loadGameButton.textContent = enabled ? `Continue Slot ${latestSaveSlot()}` : "Continue";
+  ui.pauseLoadButton.textContent = enabled ? `Continue Slot ${latestSaveSlot()}` : "Continue";
+  updateSaveSectionButtons();
+  renderSaveSlots();
+}
+
+function updateSaveSectionButtons() {
+  ui.loadSavesButton.textContent = ui.saveSlotList.hidden ? "Load Saves" : "Hide Saves";
+  ui.pauseLoadSavesButton.textContent = ui.pauseSaveSlotList.hidden ? "Load Saves" : "Hide Saves";
+}
+
+function toggleSaveSlots(container) {
+  container.hidden = !container.hidden;
+  updateSaveSectionButtons();
+}
+
+function formatSaveTime(timestamp) {
+  if (!timestamp) return "never saved";
+  return new Date(timestamp).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function renderSaveSlots() {
+  const containers = [ui.saveSlotList, ui.pauseSaveSlotList].filter(Boolean);
+  containers.forEach((container) => {
+    const inPauseMenu = container === ui.pauseSaveSlotList;
+    container.innerHTML = "";
+    saveSlots().forEach((slot) => {
+      const summary = saveSummary(slot);
+      const card = document.createElement("div");
+      card.className = `save-slot-card${slot === activeSaveSlot ? " active" : ""}`;
+
+      const text = document.createElement("div");
+      const title = document.createElement("strong");
+      const detail = document.createElement("small");
+      title.textContent = `Slot ${slot}`;
+      detail.textContent = summary
+        ? `${summary.base} - Level ${summary.level} - ${summary.distance}m - ${formatSaveTime(summary.savedAt)}`
+        : "Empty slot";
+      text.append(title, detail);
+
+      const actions = document.createElement("div");
+      actions.className = "save-slot-actions";
+
+      const newButton = document.createElement("button");
+      newButton.type = "button";
+      newButton.textContent = summary ? "New" : `New Game`;
+      newButton.dataset.slotAction = "new";
+      newButton.dataset.slot = String(slot);
+      actions.append(newButton);
+
+      if (summary) {
+        const loadButton = document.createElement("button");
+        loadButton.type = "button";
+        loadButton.textContent = inPauseMenu ? "Load" : "Continue";
+        loadButton.dataset.slotAction = "load";
+        loadButton.dataset.slot = String(slot);
+        actions.append(loadButton);
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.textContent = "Delete";
+        deleteButton.dataset.slotAction = "delete";
+        deleteButton.dataset.slot = String(slot);
+        actions.append(deleteButton);
+      }
+
+      card.append(text, actions);
+      container.append(card);
+    });
+  });
+}
+
+function handleSaveSlotAction(event) {
+  const button = event.target.closest("[data-slot-action]");
+  if (!button) return;
+  const slot = clamp(Number(button.dataset.slot) || 1, 1, SAVE_SLOT_COUNT);
+  const action = button.dataset.slotAction;
+  if (action === "new") {
+    startGame(false, slot);
+    return;
+  }
+  if (action === "load") {
+    loadGameFromMenu(slot);
+    return;
+  }
+  if (action === "delete") {
+    deleteSaveSlot(slot);
+    flash(`Slot ${slot} deleted`);
+  }
 }
 
 function openSettingsPanel() {
@@ -2432,12 +2782,18 @@ function updateCratesAndDrops(dt) {
   }
 
   world.lootPrompt = null;
+  world.approachLabel = null;
   if (world.activeSearch) return;
   if (isNearWorkbench()) {
     world.lootPrompt = { x: safeZones[0].x + 74, y: safeZones[0].y + 12, label: "E" };
   }
   for (const landmark of majorLandmarks) {
-    if (!landmark.discovered && dist(player.x, player.y, landmark.x, landmark.y) < landmark.radius) {
+    const landmarkDistance = dist(player.x, player.y, landmark.x, landmark.y);
+    if (landmarkDistance < landmark.radius + 70) {
+      const status = isLandmarkLocked(landmark) ? "Locked" : landmark.cleared ? "Cleared" : landmark.searched ? "Searched" : landmark.discovered ? "Discovered" : "Unknown";
+      world.approachLabel = { x: landmark.x, y: landmark.y - 126, label: `${landmark.name} - ${status}` };
+    }
+    if (!landmark.discovered && landmarkDistance < landmark.radius) {
       discoverLandmark(landmark);
     }
   }
@@ -2458,7 +2814,7 @@ function updateCratesAndDrops(dt) {
   if (!world.lootPrompt) {
     for (const landmark of majorLandmarks) {
       if (!landmark.looted && dist(player.x, player.y, landmark.x, landmark.y) < 112) {
-        world.lootPrompt = { x: landmark.x, y: landmark.y - 88, label: "E" };
+        world.lootPrompt = { x: landmark.x, y: landmark.y - 88, label: isLandmarkLocked(landmark) ? "LOCKED" : "E" };
         break;
       }
     }
@@ -2554,6 +2910,7 @@ function updateHud() {
   ui.questText.textContent = currentQuest().text();
   updateBaseUpgradeButton();
   updateCraftingButtons();
+  if (world.inventoryOpen) updateInventoryMenu();
 }
 
 function draw() {
@@ -2572,6 +2929,7 @@ function draw() {
   drawSearchProgress();
   drawLighting();
   drawFogOfWar();
+  drawApproachLabel();
   drawPrompt();
   drawMinimap();
 }
@@ -3150,12 +3508,13 @@ function drawLandmarks() {
     if (landmark.x < view.left || landmark.x > view.right || landmark.y < view.top || landmark.y > view.bottom) continue;
     const s = worldToScreen(landmark.x, landmark.y);
     const type = landmarkTypes[landmark.type];
+    const locked = isLandmarkLocked(landmark);
     ctx.save();
-    ctx.fillStyle = landmark.looted ? "rgba(122, 104, 76, 0.22)" : "rgba(216, 183, 95, 0.2)";
+    ctx.fillStyle = locked ? "rgba(89, 100, 97, 0.2)" : landmark.cleared ? "rgba(90, 160, 106, 0.18)" : "rgba(216, 183, 95, 0.2)";
     ctx.beginPath();
     ctx.ellipse(s.x, s.y + 20, landmark.radius * 0.72, landmark.radius * 0.34, -0.08, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = landmark.discovered ? "rgba(216, 183, 95, 0.48)" : "rgba(237, 242, 223, 0.25)";
+    ctx.strokeStyle = locked ? "rgba(188, 183, 164, 0.34)" : landmark.cleared ? "rgba(90, 160, 106, 0.42)" : landmark.discovered ? "rgba(216, 183, 95, 0.48)" : "rgba(237, 242, 223, 0.25)";
     ctx.lineWidth = 2;
     ctx.setLineDash([10, 8]);
     ctx.beginPath();
@@ -3163,9 +3522,9 @@ function drawLandmarks() {
     ctx.stroke();
     ctx.restore();
     drawLandmarkDetails(landmark);
-    if (!landmark.looted) {
+    if (!landmark.cleared) {
       const marker = worldToScreen(landmark.x, landmark.y - 106);
-      ctx.fillStyle = landmark.discovered ? type.marker : "rgba(237, 242, 223, 0.7)";
+      ctx.fillStyle = locked ? "#bcb7a4" : landmark.discovered ? type.marker : "rgba(237, 242, 223, 0.7)";
       ctx.beginPath();
       ctx.moveTo(marker.x, marker.y - 7);
       ctx.lineTo(marker.x + 7, marker.y);
@@ -3754,15 +4113,35 @@ function drawFogOfWar() {
   ctx.restore();
 }
 
+function drawApproachLabel() {
+  if (!world.approachLabel || !isFogRevealedAt(world.approachLabel.x, world.approachLabel.y)) return;
+  const s = worldToScreen(world.approachLabel.x, world.approachLabel.y);
+  ctx.save();
+  ctx.font = "bold 13px Segoe UI, sans-serif";
+  ctx.textAlign = "center";
+  const width = Math.min(260, Math.max(130, ctx.measureText(world.approachLabel.label).width + 28));
+  const x = Math.floor(s.x - width / 2);
+  const y = Math.floor(s.y - 17);
+  ctx.fillStyle = "rgba(15, 18, 18, 0.82)";
+  drawScreenRoundRect(x, y, width, 28, 6);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(216, 183, 95, 0.34)";
+  ctx.stroke();
+  ctx.fillStyle = "#edf2df";
+  ctx.fillText(world.approachLabel.label, Math.floor(s.x), Math.floor(s.y + 4), width - 16);
+  ctx.restore();
+}
+
 function drawPrompt() {
   if (!world.lootPrompt) return;
   const s = worldToScreen(world.lootPrompt.x, world.lootPrompt.y);
-  ctx.fillStyle = "rgba(15, 18, 18, 0.9)";
-  ctx.fillRect(Math.floor(s.x - 14), Math.floor(s.y - 14), 28, 24);
-  ctx.strokeStyle = "rgba(237, 242, 223, 0.35)";
-  ctx.strokeRect(Math.floor(s.x - 14), Math.floor(s.y - 14), 28, 24);
-  ctx.fillStyle = "#edf2df";
   ctx.font = "bold 14px Segoe UI, sans-serif";
+  const width = Math.max(28, ctx.measureText(world.lootPrompt.label).width + 16);
+  ctx.fillStyle = "rgba(15, 18, 18, 0.9)";
+  ctx.fillRect(Math.floor(s.x - width / 2), Math.floor(s.y - 14), width, 24);
+  ctx.strokeStyle = "rgba(237, 242, 223, 0.35)";
+  ctx.strokeRect(Math.floor(s.x - width / 2), Math.floor(s.y - 14), width, 24);
+  ctx.fillStyle = "#edf2df";
   ctx.textAlign = "center";
   ctx.fillText(world.lootPrompt.label, Math.floor(s.x), Math.floor(s.y + 4));
 }
@@ -3881,7 +4260,7 @@ function drawMinimap() {
     const lx = landmarkMini.x;
     const ly = landmarkMini.y;
     if (lx < x + 4 || lx > x + size - 4 || ly < y + 4 || ly > y + size - 4) continue;
-    ctx.fillStyle = landmark.looted ? "rgba(237, 242, 223, 0.62)" : landmarkTypes[landmark.type].marker;
+    ctx.fillStyle = landmark.cleared ? "rgba(90, 160, 106, 0.78)" : isLandmarkLocked(landmark) ? "#bcb7a4" : landmarkTypes[landmark.type].marker;
     ctx.beginPath();
     ctx.moveTo(Math.floor(lx), Math.floor(ly - 4));
     ctx.lineTo(Math.floor(lx + 4), Math.floor(ly));
@@ -3920,8 +4299,12 @@ function initInput() {
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
     const inputKey = event.code === "Space" ? " " : key;
-    if (["w", "a", "s", "d", "e", "f", "m", "r", "b", "p", "escape", "1", "2", "3", " ", "shift", "control"].includes(inputKey)) event.preventDefault();
+    if (["w", "a", "s", "d", "e", "f", "m", "r", "b", "i", "p", "escape", "1", "2", "3", " ", "shift", "control"].includes(inputKey)) event.preventDefault();
     if (key === "escape" || key === "p") {
+      if (!ui.inventoryMenu.hidden) {
+        closeInventoryMenu();
+        return;
+      }
       if (!ui.craftingMenu.hidden) {
         closeCraftingMenu();
         return;
@@ -3933,11 +4316,15 @@ function initInput() {
       togglePause();
       return;
     }
+    if (key === "i") {
+      toggleInventoryMenu();
+      return;
+    }
     if (key === "m") {
       ui.adminMenu.hidden = !ui.adminMenu.hidden;
       return;
     }
-    if (world.state !== "playing" || world.craftingOpen) return;
+    if (world.state !== "playing" || world.craftingOpen || world.inventoryOpen) return;
     if (event.code === "Space") jumpPlayer();
     if (key === "e") lootNearby();
     if (key === "f") {
@@ -3968,7 +4355,7 @@ function initInput() {
 
   window.addEventListener("mousedown", (event) => {
     if (world.state !== "playing") return;
-    if (event.target.closest(".panel, .death-screen, .menu-screen, .crafting-menu")) return;
+    if (event.target.closest(".panel, .death-screen, .menu-screen, .crafting-menu, .inventory-menu")) return;
     if (world.activeSearch) return;
     if (event.button === 0) {
       mouse.down = true;
@@ -3991,11 +4378,14 @@ function initInput() {
     button.addEventListener("click", () => setTimePreset(button.dataset.time));
   });
   ui.restartButton.addEventListener("click", restartRun);
-  ui.newGameButton.addEventListener("click", () => startGame(false));
-  ui.loadGameButton.addEventListener("click", loadGameFromMenu);
+  ui.loadGameButton.addEventListener("click", () => loadGameFromMenu(latestSaveSlot()));
+  ui.loadSavesButton.addEventListener("click", () => toggleSaveSlots(ui.saveSlotList));
+  ui.saveSlotList.addEventListener("click", handleSaveSlotAction);
+  ui.pauseSaveSlotList.addEventListener("click", handleSaveSlotAction);
   ui.resumeButton.addEventListener("click", resumeGame);
   ui.saveGameButton.addEventListener("click", saveFromPause);
-  ui.pauseLoadButton.addEventListener("click", loadGameFromMenu);
+  ui.pauseLoadButton.addEventListener("click", () => loadGameFromMenu(latestSaveSlot()));
+  ui.pauseLoadSavesButton.addEventListener("click", () => toggleSaveSlots(ui.pauseSaveSlotList));
   ui.settingsButton.addEventListener("click", openSettingsPanel);
   ui.settingsBackButton.addEventListener("click", closeSettingsPanel);
   ui.musicVolumeSlider.addEventListener("input", () => {
@@ -4025,12 +4415,13 @@ function initInput() {
   ui.craftingCloseButton.addEventListener("click", closeCraftingMenu);
   ui.craftAxeButton.addEventListener("click", () => craftTool("axe"));
   ui.craftPickaxeButton.addEventListener("click", () => craftTool("pickaxe"));
+  ui.inventoryCloseButton.addEventListener("click", closeInventoryMenu);
   ui.pauseNewButton.addEventListener("click", openNewGameMenu);
   ui.quitGameButton.addEventListener("click", quitToMainMenu);
   ui.characterButtons.forEach((button) => {
     button.addEventListener("click", () => setSelectedCharacter(button.dataset.character));
   });
-  [ui.upgradePanel, ui.adminMenu, ui.craftingMenu, ui.deathScreen, ui.mainMenu, ui.pauseMenu].forEach((element) => {
+  [ui.upgradePanel, ui.adminMenu, ui.craftingMenu, ui.inventoryMenu, ui.deathScreen, ui.mainMenu, ui.pauseMenu].forEach((element) => {
     element.addEventListener("mousedown", (event) => event.stopPropagation());
     element.addEventListener("mouseup", (event) => event.stopPropagation());
   });

@@ -110,3 +110,50 @@ Notes For Next Session
 - SFX volume setting exists but there are no actual SFX yet.
 - If continuing harvesting work, consider adding clearer hit/harvest feedback and maybe tool durability later.
 - If continuing landmarks, consider a full-screen map view using discovered landmarks and fog reveal data.
+
+2026-05-08 Session Update
+
+Save Slots
+- Replaced the old single-save menu flow with three local save slots.
+- Main menu now supports Continue plus per-slot New Game, Continue, and Delete actions.
+- Pause menu now supports saving the active slot plus per-slot Load/New/Delete actions.
+- Saves now use localStorage keys dead-grid-save-v2-slot-1/2/3.
+- The old dead-grid-save-v1 save is still read as Slot 1 if no new Slot 1 save exists.
+- Active slot metadata includes savedAt, slot, and version.
+
+Inventory
+- Added an Inventory menu opened with I.
+- Inventory pauses gameplay while open and closes with I, Escape, P, or the X button.
+- Inventory uses a 4x4 grid.
+- Current visible item types:
+  - scrap
+  - wood
+  - stone
+  - parts
+  - ammo
+  - axe if crafted
+  - pickaxe if crafted
+- Resource icons reuse existing Tile-Vector-Terrain sprites; tool icons are temporary CSS-drawn placeholders.
+
+Landmark Loop
+- Landmarks now track discovered, searched, cleared, locked, and event-triggered state.
+- Landmark state is saved and loaded.
+- Landmark approach labels show the landmark name and current state.
+- Cleared and locked landmarks have distinct map/minimap marker behavior.
+- Added unique clear rewards for each major landmark.
+- Added special landmark events:
+  - St. Marrow Clinic restores health.
+  - Ridge Radio Tower expands fog reveal.
+  - South Police Checkpoint triggers a zombie ambush.
+  - Broken Supply Convoy drops rare supplies.
+  - Green Acre Farmhouse grants extra wood.
+  - Sealed Bunker Hatch is locked until base level 2.
+
+Cleanup
+- Fixed duplicate inventoryText ids in index.html by replacing them with inventory-title classes.
+- Prompt boxes now resize so LOCKED text fits.
+
+Validation Used
+- node --check game.js
+- git diff --check
+- Checked that every getElementById reference in game.js exists in index.html.
