@@ -3,17 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Dead Grid</title>
+    <title>Last Survivor</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" type="image/x-icon" href="./sprites/GameIcon/gameicon.ico">
   </head>
   <body>
-    <canvas id="game" aria-label="Dead Grid zombie survival game"></canvas>
+    <canvas id="game" aria-label="Last Survivor zombie survival game"></canvas>
 
     <div class="hud hud-top">
       <div class="brand">
         <span class="brand-mark"></span>
-        <div>
-          <strong>Dead Grid</strong>
+        <div class="infoBox">
+          <span id="infoText">Signal Readout</span>
           <span id="runStatus">
             <span>Time: Day</span>
             <span>District: Zone 1</span>
@@ -22,38 +23,42 @@
         </div>
       </div>
       <div class="stat-row">
+        <span id="vitalsText">Vitals</span>
         <div class="meter danger"><span id="healthBar"></span><b id="healthText"></b></div>
         <div class="meter stamina"><span id="staminaBar"></span><b id="staminaText"></b></div>
         <div class="meter armor"><span id="armorBar"></span><b id="armorText"></b></div>
       </div>
       <div class="inventory">
+        <span id="inventoryText">Weapon</span>
         <span id="weaponText">Pistol</span>
         <span id="ammoText">0 / 0</span>
       </div>
       <div class="inventory">
-        <span id="inventoryText">Inventory</span>
+        <span id="inventoryText">Resources</span>
         <span id="scrapText">0 scrap</span>
       </div>
     </div>
 
     <aside class="panel collapsed" id="upgradePanel">
-      <header>
-        <div>
-          <span>Field Base</span>
-          <strong>Tech Tree</strong>
+      <div class="section1">
+        <header>
+          <div>
+            <span>Field Base</span>
+            <strong>Tech Tree</strong>
+          </div>
+          <button id="panelToggle" type="button" aria-label="Close upgrades">X</button>
+        </header>
+        <div class="base-stats">
+          <span id="levelText">Level 1</span>
+          <span id="distanceText">Open map</span>
         </div>
-        <button id="panelToggle" type="button" aria-label="Close upgrades">X</button>
-      </header>
-      <div class="base-stats">
-        <span id="levelText">Level 1</span>
-        <span id="distanceText">Open map</span>
+        <div class="quest-card">
+          <span>Current Objective</span>
+          <strong id="questTitle">Secure the camp</strong>
+          <small id="questText">Gather supplies and return to base.</small>
+        </div>
+        <button class="base-upgrade-button" id="baseUpgradeButton" type="button">Upgrade Base</button>
       </div>
-      <div class="quest-card">
-        <span>Current Objective</span>
-        <strong id="questTitle">Secure the camp</strong>
-        <small id="questText">Gather supplies and return to base.</small>
-      </div>
-      <button class="base-upgrade-button" id="baseUpgradeButton" type="button">Upgrade Base</button>
       <div class="upgrade-list" id="upgradeList"></div>
     </aside>
 
@@ -92,7 +97,7 @@
 
     <div class="menu-screen" id="mainMenu">
       <div class="menu-card">
-        <span>Dead Grid</span>
+        <span>Last Survivor</span>
         <strong>Zombie Survival</strong>
         <div class="character-select" aria-label="Choose survivor">
           <button class="character-option selected" id="maleCharacterButton" type="button" data-character="male" aria-pressed="true">

@@ -2530,10 +2530,10 @@ function updateHud() {
   ui.weaponText.textContent = player.reloading > 0 ? "Reloading" : weapons[player.weaponIndex].name;
   ui.ammoText.textContent = `${player.ammo} / ${player.reserveAmmo}`;
   const nextResourceHudHtml = `
-    <span class="resource-item"><span class="resource-icon scrap" aria-hidden="true"></span>${player.scrap} scrap</span>
-    <span class="resource-item"><span class="resource-icon wood" aria-hidden="true"></span>${player.wood} wood</span>
-    <span class="resource-item"><span class="resource-icon stone" aria-hidden="true"></span>${player.stone} stone</span>
-    <span class="resource-item"><span class="resource-icon parts" aria-hidden="true"></span>${player.parts} parts</span>
+    <span class="resource-item"><span class="resource-icon scrap" aria-hidden="true"></span><span class="resource-label">${player.scrap}<br>scrap</span></span>
+    <span class="resource-item"><span class="resource-icon wood" aria-hidden="true"></span><span class="resource-label">${player.wood}<br>wood</span></span>
+    <span class="resource-item"><span class="resource-icon stone" aria-hidden="true"></span><span class="resource-label">${player.stone}<br>stone</span></span>
+    <span class="resource-item"><span class="resource-icon parts" aria-hidden="true"></span><span class="resource-label">${player.parts}<br>parts</span></span>
   `;
   if (nextResourceHudHtml !== resourceHudHtml) {
     resourceHudHtml = nextResourceHudHtml;
@@ -3792,8 +3792,8 @@ function drawSearchProgress() {
 }
 
 function drawMinimap() {
-  const size = 132;
-  const x = 18;
+  const size = 150;
+  const x = 16;
   const y = window.innerHeight - size - 18;
   let radius = exploredRadius();
   for (const key of revealedFog) {
@@ -3814,7 +3814,7 @@ function drawMinimap() {
     x: centerX + (worldX / radius) * mapRadius,
     y: centerY + (worldY / radius) * mapRadius
   });
-  ctx.fillStyle = "rgba(14, 18, 18, 0.78)";
+  ctx.fillStyle = "rgba(14, 18, 18, 0.88)";
   drawScreenRoundRect(x, y, size, size, 8);
   ctx.fill();
   ctx.strokeStyle = "rgba(237, 242, 223, 0.18)";
