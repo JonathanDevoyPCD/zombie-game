@@ -14,6 +14,8 @@ const ui = {
   staminaText: document.getElementById("staminaText"),
   armorBar: document.getElementById("armorBar"),
   armorText: document.getElementById("armorText"),
+  poisonBar: document.getElementById("poisonBar"),
+  poisonText: document.getElementById("poisonText"),
   weaponText: document.getElementById("weaponText"),
   ammoText: document.getElementById("ammoText"),
   scrapText: document.getElementById("scrapText"),
@@ -25,6 +27,10 @@ const ui = {
   distanceText: document.getElementById("distanceText"),
   questTitle: document.getElementById("questTitle"),
   questText: document.getElementById("questText"),
+  missionHud: document.getElementById("missionHud"),
+  questToggle: document.getElementById("questToggle"),
+  storyQuestList: document.getElementById("storyQuestList"),
+  survivalObjectiveList: document.getElementById("survivalObjectiveList"),
   baseUpgradeButton: document.getElementById("baseUpgradeButton"),
   toast: document.getElementById("toast"),
   adminMenu: document.getElementById("adminMenu"),
@@ -81,10 +87,15 @@ const drops = [];
 const revealedFog = new Set();
 const generatedStructureIds = new Set();
 const harvestStates = new Map();
+let missionHudDirty = true;
+let missionHudSignature = "";
 
 const FRAME_SIZE = 128;
 const SUMMER_GROUND_TILE_SIZE = 192;
 const DAY_LENGTH = 420;
+const POISON_FILL_TIME = DAY_LENGTH * 3;
+const POISON_DAMAGE_INTERVAL = 180;
+const POISON_DAMAGE_FRACTION = 0.05;
 const MUSIC_VERSION = "direct-1";
 const SETTINGS_KEY = "dead-grid-settings-v1";
 const SAVE_KEY_BASE = "dead-grid-save-v2-slot-";
@@ -262,6 +273,13 @@ const player = {
   wood: 0,
   stone: 0,
   parts: 0,
+  water: 0,
+  medicalEquipment: 0,
+  antidote: false,
+  radio: false,
+  poison: 0,
+  infected: false,
+  poisonDamageTimer: 0,
   tools: {
     axe: false,
     pickaxe: false
@@ -298,6 +316,7 @@ const world = {
   inventoryOpen: false,
   inventoryReturnState: "playing",
   questIndex: 0,
+  questCompletedCount: 0,
   baseLevel: 0,
   harvestClock: 0,
   started: performance.now(),
@@ -331,6 +350,7 @@ const structureTypes = {
 const landmarkTypes = {
   clinic: { name: "Abandoned Clinic", color: "#dfe8dc", marker: "#e9f1e7" },
   radio: { name: "Radio Tower", color: "#b7c4bd", marker: "#87b6ff" },
+  military: { name: "Military Camp", color: "#6b7a62", marker: "#9bb866" },
   checkpoint: { name: "Police Checkpoint", color: "#6b7385", marker: "#6f9bd8" },
   convoy: { name: "Crashed Convoy", color: "#7b6860", marker: "#d8b75f" },
   farmhouse: { name: "Old Farmhouse", color: "#9f7b43", marker: "#aacd62" },
@@ -347,9 +367,9 @@ const landmarkDefinitions = [
     radius: 185,
     revealRadius: 760,
     event: "medicalCache",
-    discoveryReward: { xp: 45, parts: 6, med: 40 },
-    lootReward: { parts: 18, scrap: 85, med: 70 },
-    clearReward: { xp: 35, med: 55 }
+    discoveryReward: { xp: 45, parts: 6, med: 40, water: 24 },
+    lootReward: { parts: 18, scrap: 85, med: 70, medicalEquipment: 2 },
+    clearReward: { xp: 35, med: 55, antidote: 1 }
   },
   {
     id: "ridge-radio",
@@ -361,20 +381,20 @@ const landmarkDefinitions = [
     revealRadius: 1180,
     event: "signalBoost",
     discoveryReward: { xp: 60, parts: 10, scrap: 45 },
-    lootReward: { parts: 28, scrap: 70, ammo: 30 },
+    lootReward: { parts: 28, scrap: 70, ammo: 30, radio: 1 },
     clearReward: { xp: 55, parts: 12 }
   },
   {
     id: "south-checkpoint",
-    type: "checkpoint",
-    name: "South Police Checkpoint",
+    type: "military",
+    name: "South Military Camp",
     x: 1060,
     y: 850,
     radius: 180,
     revealRadius: 820,
     event: "ambush",
     discoveryReward: { xp: 45, ammo: 24, scrap: 50 },
-    lootReward: { ammo: 65, scrap: 95, parts: 12 },
+    lootReward: { ammo: 65, scrap: 95, parts: 12, medicalEquipment: 1 },
     clearReward: { xp: 45, ammo: 28 }
   },
   {
@@ -399,8 +419,8 @@ const landmarkDefinitions = [
     radius: 205,
     revealRadius: 780,
     event: "woodCache",
-    discoveryReward: { xp: 42, wood: 95, med: 24 },
-    lootReward: { wood: 190, scrap: 55, ammo: 24 },
+    discoveryReward: { xp: 42, wood: 95, med: 24, water: 30 },
+    lootReward: { wood: 190, scrap: 55, ammo: 24, water: 45 },
     clearReward: { xp: 38, wood: 120 }
   },
   {
@@ -424,36 +444,81 @@ const toolRecipes = {
   pickaxe: { name: "Pickaxe", cost: { wood: 45, scrap: 30, parts: 8 } }
 };
 
-const questDefinitions = [
+const storyQuests = [
   {
-    title: "Secure the Camp",
-    text: () => `Collect 80 wood and 65 scrap, then return to base. Wood ${player.wood}/80 - Scrap ${player.scrap}/65.`,
-    done: () => isPlayerInSafeZone() && player.wood >= 80 && player.scrap >= 65
+    id: "discover-hospital",
+    title: "Discover Hospital",
+    detail: "Locate St. Marrow Clinic.",
+    progress: () => landmarkProgress("st-marrow-clinic", "discovered")
   },
   {
-    title: "Raise the Fence",
-    text: () => "Use the Base Upgrade button to turn the tent camp into a fenced camp.",
-    done: () => world.baseLevel >= 1
+    id: "discover-military",
+    title: "Discover Military Camp",
+    detail: "Find the South Military Camp.",
+    progress: () => landmarkProgress("south-checkpoint", "discovered")
   },
   {
-    title: "Scout a Farm",
-    text: () => "Find and enter an abandoned farm beyond the first fog line.",
-    done: () => structures.some((structure) => structure.discovered && structure.type === "farm" && structure.zone >= 2)
+    id: "look-for-survivors",
+    title: "Look for Survivors",
+    detail: "Search survivor camps or clear the farmhouse.",
+    progress: () => ratioProgress(discoveredSurvivorLeads(), 2)
   },
   {
-    title: "Recover Radio Parts",
-    text: () => `Loot depots, clinics, or towers until you have 25 parts, then return to base. Parts ${player.parts}/25.`,
-    done: () => isPlayerInSafeZone() && player.parts >= 25
+    id: "find-radio",
+    title: "Find Radio Tower",
+    detail: "Reach Ridge Radio Tower.",
+    progress: () => landmarkProgress("ridge-radio", "discovered")
+  }
+];
+
+const survivalObjectives = [
+  {
+    id: "expand-base",
+    title: "Gather wood to expand base",
+    detail: "Wood and scrap are needed for the first fence.",
+    progress: () => ratioProgress(Math.min(player.wood, 80) + Math.min(player.scrap, 65), 145)
   },
   {
-    title: "Fortify the Outpost",
-    text: () => "Upgrade the base again to expand the safe zone and improve recovery.",
-    done: () => world.baseLevel >= 2
+    id: "gather-water",
+    title: "Gather water for camp",
+    detail: "Water can be found at wells, clinics, and camps.",
+    progress: () => ratioProgress(player.water, 60)
   },
   {
-    title: "Write Your Route",
-    text: () => "Keep exploring. The map, camps, and loot you uncover are now your story.",
-    done: () => false
+    id: "gather-stone",
+    title: "Gather stone for walls",
+    detail: "Craft a pickaxe and harvest stone nodes.",
+    progress: () => ratioProgress(player.stone, 80)
+  },
+  {
+    id: "gather-metal",
+    title: "Gather metal and scrap",
+    detail: "Stockpile scrap and parts for gear and defenses.",
+    progress: () => ratioProgress(Math.min(player.scrap, 120) + Math.min(player.parts, 25), 145)
+  },
+  {
+    id: "medical-equipment",
+    title: "Find medical equipment",
+    detail: "Search clinics, hospitals, and medical caches.",
+    progress: () => ratioProgress(player.medicalEquipment, 3)
+  },
+  {
+    id: "antidote",
+    title: "Find anti-dote",
+    detail: "Prevent bite poison from becoming fatal.",
+    progress: () => ratioProgress(player.antidote ? 1 : 0, 1)
+  },
+  {
+    id: "repair-outpost",
+    title: "Repair outposts",
+    detail: "Fortify the base as a first safe-zone network step.",
+    progress: () => ratioProgress(world.baseLevel, 2)
+  },
+  {
+    id: "find-radio-item",
+    title: "Find Radio / Walkie Talkie",
+    detail: "Search radio or military sites for comms.",
+    progress: () => ratioProgress(player.radio ? 1 : 0, 1)
   }
 ];
 
@@ -857,7 +922,22 @@ function addResource(kind, amount) {
     player.hp = clamp(player.hp + amount, 0, player.maxHp);
     return;
   }
-  if (["scrap", "wood", "stone", "parts"].includes(kind)) {
+  if (kind === "antidote") {
+    player.antidote = true;
+    player.infected = false;
+    player.poison = 0;
+    player.poisonDamageTimer = 0;
+    return;
+  }
+  if (kind === "radio") {
+    player.radio = true;
+    return;
+  }
+  if (kind === "medicalEquipment") {
+    player.medicalEquipment += amount;
+    return;
+  }
+  if (["scrap", "wood", "stone", "parts", "water"].includes(kind)) {
     player[kind] += amount;
   }
 }
@@ -881,16 +961,123 @@ function formatCost(cost) {
 }
 
 function currentQuest() {
-  return questDefinitions[Math.min(world.questIndex, questDefinitions.length - 1)];
+  const activeStory = storyQuests.find((quest) => !quest.progress().complete) || storyQuests[storyQuests.length - 1];
+  const activeObjective = survivalObjectives.find((objective) => !objective.progress().complete) || survivalObjectives[survivalObjectives.length - 1];
+  return activeStory?.progress().complete ? activeObjective : activeStory;
 }
 
 function updateQuestProgress() {
-  let advanced = false;
-  while (world.questIndex < questDefinitions.length - 1 && currentQuest().done()) {
-    world.questIndex += 1;
-    advanced = true;
+  const completed = completedMissionCount();
+  if (completed > world.questCompletedCount) {
+    world.questCompletedCount = completed;
+    flash(`Objective updated: ${currentQuest().title}`);
   }
-  if (advanced) flash(`Objective: ${currentQuest().title}`);
+  markMissionHudDirty();
+}
+
+function completedMissionCount() {
+  return [...storyQuests, ...survivalObjectives].filter((item) => item.progress().complete).length;
+}
+
+function markMissionHudDirty() {
+  missionHudDirty = true;
+}
+
+function missionListSignature(items) {
+  return items.map((item) => {
+    const progress = item.progress();
+    return `${item.id}:${progress.current}/${progress.target}:${progress.complete}`;
+  }).join("|");
+}
+
+function missionHudStateSignature() {
+  return [
+    currentQuest()?.id || "none",
+    missionListSignature(storyQuests),
+    missionListSignature(survivalObjectives)
+  ].join("::");
+}
+
+function renderMissionList(container, items, limit = items.length) {
+  if (!container) return;
+  container.innerHTML = "";
+  const activeIndex = items.findIndex((item) => !item.progress().complete);
+  items.slice(0, limit).forEach((item, index) => {
+    const progress = item.progress();
+    const row = document.createElement("div");
+    row.className = `mission-item${progress.complete ? " complete" : index === activeIndex ? " active" : ""}`;
+    row.title = item.detail;
+    row.innerHTML = `
+      <span class="mission-dot" aria-hidden="true"></span>
+      <span>${item.title}</span>
+      <span class="mission-progress">${progress.label}</span>
+    `;
+    container.append(row);
+  });
+}
+
+function updateMissionHud(force = false) {
+  if (!force && !missionHudDirty) return;
+  const nextSignature = missionHudStateSignature();
+  if (!force && nextSignature === missionHudSignature) {
+    missionHudDirty = false;
+    return;
+  }
+  missionHudSignature = nextSignature;
+  missionHudDirty = false;
+
+  const active = currentQuest();
+  ui.questTitle.textContent = active?.title || "Keep moving";
+  ui.questText.textContent = active?.detail || "Explore, gather, and return before the dark finds you.";
+  renderMissionList(ui.storyQuestList, storyQuests);
+  renderMissionList(ui.survivalObjectiveList, survivalObjectives);
+}
+
+function syncPanelToggles() {
+  const upgradesClosed = ui.upgradePanel.classList.contains("collapsed");
+  ui.panelToggle.textContent = upgradesClosed ? "OPEN" : "CLOSE";
+  ui.panelToggle.setAttribute("aria-label", upgradesClosed ? "Open upgrades" : "Close upgrades");
+
+  const questsClosed = ui.missionHud.classList.contains("collapsed");
+  ui.questToggle.textContent = questsClosed ? "OPEN" : "CLOSE";
+  ui.questToggle.setAttribute("aria-label", questsClosed ? "Open quests" : "Close quests");
+}
+
+function toggleUpgradePanel() {
+  ui.upgradePanel.classList.toggle("collapsed");
+  syncPanelToggles();
+}
+
+function toggleQuestHud() {
+  const opening = ui.missionHud.classList.contains("collapsed");
+  ui.missionHud.classList.toggle("collapsed");
+  if (opening) updateMissionHud();
+  syncPanelToggles();
+}
+
+function ratioProgress(value, target) {
+  const current = clamp(Math.floor(value), 0, target);
+  return {
+    current,
+    target,
+    complete: current >= target,
+    label: target === 1 ? (current >= 1 ? "Done" : "Open") : `${current}/${target}`
+  };
+}
+
+function landmarkById(id) {
+  return majorLandmarks.find((landmark) => landmark.id === id);
+}
+
+function landmarkProgress(id, field = "discovered") {
+  return ratioProgress(landmarkById(id)?.[field] ? 1 : 0, 1);
+}
+
+function discoveredSurvivorLeads() {
+  const discoveredCamps = structures.filter((structure) => structure.discovered && structure.type === "camp").length;
+  const farmhouseCleared = landmarkById("green-acre-farm")?.cleared ? 1 : 0;
+  const militaryDiscovered = landmarkById("south-checkpoint")?.discovered ? 1 : 0;
+  return discoveredCamps + farmhouseCleared + militaryDiscovered;
 }
 
 function isNearWorkbench() {
@@ -927,6 +1114,10 @@ function inventoryItems() {
     { id: "wood", name: "Wood", amount: player.wood, icon: "wood" },
     { id: "stone", name: "Stone", amount: player.stone, icon: "stone" },
     { id: "parts", name: "Parts", amount: player.parts, icon: "parts" },
+    { id: "water", name: "Water", amount: player.water, icon: "water" },
+    { id: "medicalEquipment", name: "Med Kit", amount: player.medicalEquipment, icon: "medical" },
+    player.antidote ? { id: "antidote", name: "Anti-dote", amount: "Found", icon: "antidote" } : null,
+    player.radio ? { id: "radio", name: "Radio", amount: "Found", icon: "radio" } : null,
     { id: "ammo", name: "Ammo", amount: player.reserveAmmo, icon: "ammo" },
     player.tools.axe ? { id: "axe", name: "Axe", amount: "Tool", icon: "axe" } : null,
     player.tools.pickaxe ? { id: "pickaxe", name: "Pickaxe", amount: "Tool", icon: "pickaxe" } : null
@@ -1011,6 +1202,9 @@ function landmarkRewardText(rewards) {
     .map(([kind, amount]) => {
       if (kind === "med") return "patched wounds";
       if (kind === "xp") return `${amount} XP`;
+      if (kind === "medicalEquipment") return `${amount} med kit${amount === 1 ? "" : "s"}`;
+      if (kind === "antidote") return "anti-dote";
+      if (kind === "radio") return "radio";
       return `${amount} ${kind}`;
     })
     .join(", ");
@@ -1018,7 +1212,7 @@ function landmarkRewardText(rewards) {
 }
 
 function applyLandmarkReward(rewards) {
-  Object.entries(rewards).forEach(([kind, amount]) => {
+  Object.entries(rewards || {}).forEach(([kind, amount]) => {
     if (kind === "xp") {
       gainXp(amount);
     } else {
@@ -1065,6 +1259,7 @@ function triggerLandmarkEvent(landmark) {
   }
   if (landmark.event === "medicalCache") {
     player.hp = player.maxHp;
+    addResource("medicalEquipment", 1);
     flash(`${landmark.name}: medical station restored health`);
     return;
   }
@@ -1617,11 +1812,11 @@ function generateStructuresAroundPlayer() {
 function structureRewards(structure) {
   const zoneBoost = Math.max(1, structure.zone);
   const table = {
-    farm: { wood: Math.round(rand(34, 58) * zoneBoost), scrap: Math.round(rand(6, 14) * zoneBoost) },
+    farm: { wood: Math.round(rand(34, 58) * zoneBoost), scrap: Math.round(rand(6, 14) * zoneBoost), water: Math.round(rand(12, 24) * zoneBoost) },
     cabin: { wood: Math.round(rand(18, 34) * zoneBoost), scrap: Math.round(rand(18, 34) * zoneBoost), ammo: Math.round(rand(8, 20)) },
-    camp: { wood: Math.round(rand(28, 46) * zoneBoost), scrap: Math.round(rand(18, 30) * zoneBoost), ammo: Math.round(rand(12, 28)) },
+    camp: { wood: Math.round(rand(28, 46) * zoneBoost), scrap: Math.round(rand(18, 30) * zoneBoost), water: Math.round(rand(10, 22) * zoneBoost), ammo: Math.round(rand(12, 28)) },
     depot: { scrap: Math.round(rand(28, 48) * zoneBoost), parts: Math.round(rand(8, 16) * zoneBoost), ammo: Math.round(rand(16, 34)) },
-    clinic: { parts: Math.round(rand(10, 20) * zoneBoost), med: 42, scrap: Math.round(rand(14, 26) * zoneBoost) },
+    clinic: { parts: Math.round(rand(10, 20) * zoneBoost), med: 42, medicalEquipment: 1, water: Math.round(rand(8, 18) * zoneBoost), scrap: Math.round(rand(14, 26) * zoneBoost) },
     radio: { parts: Math.round(rand(18, 32) * zoneBoost), scrap: Math.round(rand(24, 42) * zoneBoost) }
   };
   return table[structure.type] || table.cabin;
@@ -1630,7 +1825,13 @@ function structureRewards(structure) {
 function describeRewards(rewards) {
   return Object.entries(rewards)
     .filter(([, amount]) => amount > 0)
-    .map(([kind, amount]) => kind === "med" ? "patched wounds" : `${amount} ${kind}`)
+    .map(([kind, amount]) => {
+      if (kind === "med") return "patched wounds";
+      if (kind === "medicalEquipment") return `${amount} med kit${amount === 1 ? "" : "s"}`;
+      if (kind === "antidote") return "anti-dote";
+      if (kind === "radio") return "radio";
+      return `${amount} ${kind}`;
+    })
     .join(", ");
 }
 
@@ -2022,6 +2223,13 @@ function buildSaveData() {
     wood: player.wood,
     stone: player.stone,
     parts: player.parts,
+    water: player.water,
+    medicalEquipment: player.medicalEquipment,
+    antidote: player.antidote,
+    radio: player.radio,
+    poison: player.poison,
+    infected: player.infected,
+    poisonDamageTimer: player.poisonDamageTimer,
     xp: player.xp,
     level: player.level,
     weaponIndex: player.weaponIndex,
@@ -2043,6 +2251,7 @@ function buildSaveData() {
       nextCrate: world.nextCrate,
       nextDropId: world.nextDropId,
       questIndex: world.questIndex,
+      questCompletedCount: world.questCompletedCount,
       baseLevel: world.baseLevel,
       harvestClock: world.harvestClock
     },
@@ -2121,6 +2330,13 @@ function loadProgress(slot = activeSaveSlot) {
     player.wood = Number(data.wood) || 0;
     player.stone = Number(data.stone) || 0;
     player.parts = Number(data.parts) || 0;
+    player.water = Number(data.water) || 0;
+    player.medicalEquipment = Number(data.medicalEquipment) || 0;
+    player.antidote = Boolean(data.antidote);
+    player.radio = Boolean(data.radio);
+    player.poison = clamp(Number(data.poison) || 0, 0, 100);
+    player.infected = Boolean(data.infected) && !player.antidote;
+    player.poisonDamageTimer = Number(data.poisonDamageTimer) || 0;
     player.tools.axe = Boolean(data.tools?.axe);
     player.tools.pickaxe = Boolean(data.tools?.pickaxe);
     player.xp = Number(data.xp) || 0;
@@ -2151,7 +2367,8 @@ function loadProgress(slot = activeSaveSlot) {
     world.nextSpawn = Number(data.world?.nextSpawn) || 0;
     world.nextCrate = Number(data.world?.nextCrate) || 0;
     world.nextDropId = Number(data.world?.nextDropId) || 1;
-    world.questIndex = clamp(Number(data.world?.questIndex) || 0, 0, questDefinitions.length - 1);
+    world.questIndex = Number(data.world?.questIndex) || 0;
+    world.questCompletedCount = Number(data.world?.questCompletedCount) || 0;
     world.baseLevel = clamp(Number(data.world?.baseLevel) || 0, 0, baseStages.length - 1);
     world.harvestClock = Number(data.world?.harvestClock ?? data.world?.time) || 0;
     world.activeSearch = null;
@@ -2203,6 +2420,8 @@ function loadProgress(slot = activeSaveSlot) {
       landmark.eventTriggered = Boolean(state?.eventTriggered || state?.looted);
       if (landmark.discovered) revealFogCircle(landmark.x, landmark.y, landmark.revealRadius);
     });
+    world.questCompletedCount = Math.max(world.questCompletedCount, completedMissionCount());
+    markMissionHudDirty();
     (data.drops || []).forEach((drop) => drops.push({
       ...drop,
       id: Number(drop.id) || world.nextDropId++
@@ -2236,6 +2455,13 @@ function clearProgress(slot = activeSaveSlot) {
   player.wood = 0;
   player.stone = 0;
   player.parts = 0;
+  player.water = 0;
+  player.medicalEquipment = 0;
+  player.antidote = false;
+  player.radio = false;
+  player.poison = 0;
+  player.infected = false;
+  player.poisonDamageTimer = 0;
   player.tools.axe = false;
   player.tools.pickaxe = false;
   player.xp = 0;
@@ -2249,6 +2475,7 @@ function clearProgress(slot = activeSaveSlot) {
   resetLandmarks();
   generatedStructureIds.clear();
   world.questIndex = 0;
+  world.questCompletedCount = 0;
   world.baseLevel = 0;
   world.activeSearch = null;
   closeCraftingMenu();
@@ -2258,6 +2485,7 @@ function clearProgress(slot = activeSaveSlot) {
   world.nextCrate = 0;
   world.nextDropId = 1;
   world.harvestClock = 0;
+  markMissionHudDirty();
   applyBaseStats();
   applyTechStats();
   restartRun(false);
@@ -2277,14 +2505,36 @@ function damagePlayer(amount) {
   const armorDamage = Math.min(player.armor, Math.ceil(amount * 0.55));
   player.armor -= armorDamage;
   player.hp -= hpDamage;
+  if (!player.antidote) {
+    player.infected = true;
+    player.poison = clamp(player.poison + 4, 0, 100);
+  }
   player.invulnerable = 0.24;
   addHitParticles(player.x, player.y, "#dc5148", 8);
+  checkPlayerDeath();
+}
+
+function checkPlayerDeath() {
   if (player.hp <= 0) {
     player.hp = 0;
     player.alive = false;
     world.state = "dead";
     mouse.down = false;
     ui.deathScreen.hidden = false;
+  }
+}
+
+function updatePoison(dt) {
+  if (!player.alive || player.antidote || !player.infected) return;
+  player.poison = clamp(player.poison + (dt / POISON_FILL_TIME) * 100, 0, 100);
+  if (player.poison < 100) return;
+  player.poisonDamageTimer += dt;
+  while (player.poisonDamageTimer >= POISON_DAMAGE_INTERVAL) {
+    player.poisonDamageTimer -= POISON_DAMAGE_INTERVAL;
+    player.hp -= Math.max(1, player.maxHp * POISON_DAMAGE_FRACTION);
+    flash("Poison is breaking down your vitals");
+    checkPlayerDeath();
+    if (!player.alive) return;
   }
 }
 
@@ -2306,6 +2556,7 @@ function restartRun(showMessage = true) {
   player.hp = player.maxHp;
   player.armor = player.maxArmor;
   player.stamina = player.maxStamina;
+  player.poisonDamageTimer = 0;
   player.ammo = weapons[player.weaponIndex].clip;
   player.reserveAmmo = player.ammoCap;
   player.reloading = 0;
@@ -2580,6 +2831,7 @@ function update(dt) {
   }
 
   updatePlayer(dt);
+  updatePoison(dt);
   updateShooting(dt);
   updateZombies(dt);
   updateBullets(dt);
@@ -2877,12 +3129,15 @@ function updateHud() {
   const hp = Math.max(0, Math.round(player.hp));
   const armor = Math.max(0, Math.round(player.armor));
   const stamina = Math.max(0, Math.round(player.stamina));
+  const poison = Math.max(0, Math.round(player.poison));
   ui.healthBar.style.width = `${(hp / player.maxHp) * 100}%`;
   ui.healthText.textContent = `${hp} / ${player.maxHp}`;
   ui.staminaBar.style.width = `${(stamina / player.maxStamina) * 100}%`;
   ui.staminaText.textContent = `${stamina} / ${player.maxStamina}`;
   ui.armorBar.style.width = `${player.maxArmor ? (armor / player.maxArmor) * 100 : 0}%`;
   ui.armorText.textContent = `${armor} / ${player.maxArmor}`;
+  ui.poisonBar.style.width = `${poison}%`;
+  ui.poisonText.textContent = player.antidote ? "anti-dote" : `${poison}% poison`;
   ui.weaponText.textContent = player.reloading > 0 ? "Reloading" : weapons[player.weaponIndex].name;
   ui.ammoText.textContent = `${player.ammo} / ${player.reserveAmmo}`;
   const nextResourceHudHtml = `
@@ -2890,6 +3145,8 @@ function updateHud() {
     <span class="resource-item"><span class="resource-icon wood" aria-hidden="true"></span><span class="resource-label">${player.wood}<br>wood</span></span>
     <span class="resource-item"><span class="resource-icon stone" aria-hidden="true"></span><span class="resource-label">${player.stone}<br>stone</span></span>
     <span class="resource-item"><span class="resource-icon parts" aria-hidden="true"></span><span class="resource-label">${player.parts}<br>parts</span></span>
+    <span class="resource-item"><span class="resource-icon water" aria-hidden="true"></span><span class="resource-label">${player.water}<br>water</span></span>
+    <span class="resource-item"><span class="resource-icon medical" aria-hidden="true"></span><span class="resource-label">${player.medicalEquipment}<br>med</span></span>
   `;
   if (nextResourceHudHtml !== resourceHudHtml) {
     resourceHudHtml = nextResourceHudHtml;
@@ -2906,8 +3163,7 @@ function updateHud() {
   }
   ui.levelText.textContent = `Level ${player.level} - ${player.xp}/${player.level * 60} XP`;
   ui.distanceText.textContent = baseStages[world.baseLevel].name;
-  ui.questTitle.textContent = currentQuest().title;
-  ui.questText.textContent = currentQuest().text();
+  updateMissionHud();
   updateBaseUpgradeButton();
   updateCraftingButtons();
   if (world.inventoryOpen) updateInventoryMenu();
@@ -3450,7 +3706,7 @@ function drawLandmarkDetails(landmark) {
     ctx.moveTo(s.x - 25, s.y + 48);
     ctx.lineTo(s.x + 25, s.y + 48);
     ctx.stroke();
-  } else if (landmark.type === "checkpoint") {
+  } else if (landmark.type === "checkpoint" || landmark.type === "military") {
     drawPropImage("watchtower", landmark.x - 74, landmark.y - 22, 92, alpha);
     drawPropImage("watchtower", landmark.x + 86, landmark.y - 18, 84, alpha, true);
     drawPropImage("barrel", landmark.x - 16, landmark.y + 58, 38, alpha);
@@ -4299,7 +4555,7 @@ function initInput() {
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
     const inputKey = event.code === "Space" ? " " : key;
-    if (["w", "a", "s", "d", "e", "f", "m", "r", "b", "i", "p", "escape", "1", "2", "3", " ", "shift", "control"].includes(inputKey)) event.preventDefault();
+    if (["w", "a", "s", "d", "e", "f", "m", "q", "r", "b", "i", "p", "escape", "1", "2", "3", " ", "shift", "control"].includes(inputKey)) event.preventDefault();
     if (key === "escape" || key === "p") {
       if (!ui.inventoryMenu.hidden) {
         closeInventoryMenu();
@@ -4324,6 +4580,10 @@ function initInput() {
       ui.adminMenu.hidden = !ui.adminMenu.hidden;
       return;
     }
+    if (key === "q") {
+      toggleQuestHud();
+      return;
+    }
     if (world.state !== "playing" || world.craftingOpen || world.inventoryOpen) return;
     if (event.code === "Space") jumpPlayer();
     if (key === "e") lootNearby();
@@ -4332,7 +4592,7 @@ function initInput() {
       flash(player.flashlight ? "Flashlight on" : "Flashlight off");
     }
     if (key === "r") reload();
-    if (key === "b") ui.upgradePanel.classList.toggle("collapsed");
+    if (key === "b") toggleUpgradePanel();
     if (key === "1" && weapons[0].unlock()) player.weaponIndex = 0;
     if (key === "2" && weapons[1].unlock()) player.weaponIndex = 1;
     if (key === "3" && weapons[2].unlock()) player.weaponIndex = 2;
@@ -4355,7 +4615,7 @@ function initInput() {
 
   window.addEventListener("mousedown", (event) => {
     if (world.state !== "playing") return;
-    if (event.target.closest(".panel, .death-screen, .menu-screen, .crafting-menu, .inventory-menu")) return;
+    if (event.target.closest(".panel, .mission-hud, .death-screen, .menu-screen, .crafting-menu, .inventory-menu")) return;
     if (world.activeSearch) return;
     if (event.button === 0) {
       mouse.down = true;
@@ -4372,7 +4632,8 @@ function initInput() {
     switchWeapon(Math.sign(event.deltaY));
   }, { passive: true });
 
-  ui.panelToggle.addEventListener("click", () => ui.upgradePanel.classList.toggle("collapsed"));
+  ui.panelToggle.addEventListener("click", toggleUpgradePanel);
+  ui.questToggle.addEventListener("click", toggleQuestHud);
   ui.baseUpgradeButton.addEventListener("click", upgradeBase);
   ui.adminTimeButtons.forEach((button) => {
     button.addEventListener("click", () => setTimePreset(button.dataset.time));
@@ -4421,7 +4682,7 @@ function initInput() {
   ui.characterButtons.forEach((button) => {
     button.addEventListener("click", () => setSelectedCharacter(button.dataset.character));
   });
-  [ui.upgradePanel, ui.adminMenu, ui.craftingMenu, ui.inventoryMenu, ui.deathScreen, ui.mainMenu, ui.pauseMenu].forEach((element) => {
+  [ui.upgradePanel, ui.missionHud, ui.adminMenu, ui.craftingMenu, ui.inventoryMenu, ui.deathScreen, ui.mainMenu, ui.pauseMenu].forEach((element) => {
     element.addEventListener("mousedown", (event) => event.stopPropagation());
     element.addEventListener("mouseup", (event) => event.stopPropagation());
   });
@@ -4453,6 +4714,7 @@ function init() {
   ensureWorldPopulated();
   rebuildUpgradePanel();
   updateHud();
+  syncPanelToggles();
   updateMenuButtons();
   updateCharacterSelection();
   ui.mainMenu.hidden = false;

@@ -157,3 +157,51 @@ Validation Used
 - node --check game.js
 - git diff --check
 - Checked that every getElementById reference in game.js exists in index.html.
+
+2026-05-08 Quest/Objectives Update
+
+Quest and Objective System
+- Added a dedicated top-center mission HUD with two columns:
+  - Quests for longer story beats
+  - Objectives for survival/base tasks
+- Story quests now track:
+  - Discover Hospital
+  - Discover Military Camp
+  - Look for Survivors
+  - Find Radio Tower
+- Survival objectives now track:
+  - Gather wood/scrap for base expansion
+  - Gather water for camp
+  - Gather stone for walls
+  - Gather metal/scrap for gear and defenses
+  - Find medical equipment
+  - Find anti-dote
+  - Repair outposts/base safe-zone network
+  - Find radio/walkie talkie
+
+Poison Foundation
+- Added a green poison vital bar.
+- Zombie bites now infect the player unless anti-dote has been found.
+- Poison slowly fills over three in-game day cycles.
+- At 100% poison, health drops by 5% every 3 minutes.
+- Finding anti-dote clears infection and poison.
+
+Temporary Art / Sprite Needs
+- Water icon is currently CSS/vector.
+- Medical equipment icon is currently CSS/vector.
+- Anti-dote icon is currently CSS/vector.
+- Radio/walkie talkie icon is currently CSS/vector.
+- Military camp currently reuses watchtower/barrel/chest assets.
+- Future replacement sprites needed:
+  - Water canteen / water barrel
+  - Medical equipment / med bag
+  - Anti-dote vial
+  - Radio or walkie talkie
+  - Military tent / military camp props
+  - Barbed wire / metal defenses
+
+Validation Used
+- Headless Edge DOM smoke test confirmed mission HUD and poison bar render.
+- git diff --check
+- Checked that every getElementById reference in game.js exists in index.html.
+- node --check was not available on this PC because node is not installed/in PATH.
