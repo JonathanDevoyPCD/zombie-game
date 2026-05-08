@@ -114,11 +114,20 @@
 
     <div class="inventory-menu" id="inventoryMenu" hidden>
       <header>
-        <span>Backpack</span>
+        <span id="inventoryModeText">Backpack</span>
         <strong>Inventory</strong>
         <button id="inventoryCloseButton" type="button" aria-label="Close inventory">X</button>
       </header>
-      <div class="inventory-grid" id="inventoryGrid"></div>
+      <div class="inventory-columns">
+        <section>
+          <span class="inventory-column-title">Backpack</span>
+          <div class="inventory-grid" id="inventoryGrid"></div>
+        </section>
+        <section id="stashColumn" hidden>
+          <span class="inventory-column-title">Base Stash</span>
+          <div class="inventory-grid" id="stashGrid"></div>
+        </section>
+      </div>
     </div>
 
     <div class="menu-screen" id="mainMenu">

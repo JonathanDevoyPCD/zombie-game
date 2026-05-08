@@ -58,6 +58,9 @@ const ui = {
   craftPickaxeButton: document.getElementById("craftPickaxeButton"),
   inventoryMenu: document.getElementById("inventoryMenu"),
   inventoryGrid: document.getElementById("inventoryGrid"),
+  stashGrid: document.getElementById("stashGrid"),
+  stashColumn: document.getElementById("stashColumn"),
+  inventoryModeText: document.getElementById("inventoryModeText"),
   inventoryCloseButton: document.getElementById("inventoryCloseButton"),
   pauseNewButton: document.getElementById("pauseNewButton"),
   quitGameButton: document.getElementById("quitGameButton"),
@@ -89,6 +92,21 @@ const generatedStructureIds = new Set();
 const harvestStates = new Map();
 let missionHudDirty = true;
 let missionHudSignature = "";
+let inventorySelectedSlot = null;
+
+const BACKPACK_SLOT_COUNT = 16;
+const STASH_SLOT_COUNT = 16;
+const backpackSlots = Array(BACKPACK_SLOT_COUNT).fill(null);
+const stashSlots = Array(STASH_SLOT_COUNT).fill(null);
+const baseStash = {
+  scrap: 0,
+  wood: 0,
+  stone: 0,
+  parts: 0,
+  water: 0,
+  medicalEquipment: 0,
+  ammo: 0
+};
 
 const FRAME_SIZE = 128;
 const SUMMER_GROUND_TILE_SIZE = 192;
@@ -250,6 +268,28 @@ const tech = {
     level: 0,
     max: 2,
     baseCost: 95
+  },
+  barbedWire: {
+    name: "Barbed Wire Fencing",
+    desc: "Add sharper perimeter wire that damages zombies near the base walls.",
+    level: 0,
+    max: 4,
+    baseCost: 70
+  },
+  gate: {
+    name: "Base Gate",
+    desc: "Upgrade the level 10 gate from wood to sheet metal, then armor plate.",
+    level: 0,
+    max: 3,
+    baseCost: 120,
+    requiresBaseLevel: 10
+  },
+  stash: {
+    name: "Base Stash",
+    desc: "Unlock the camp stash and transfer supplies between backpack and base.",
+    level: 0,
+    max: 1,
+    baseCost: 85
   }
 };
 
@@ -315,9 +355,11 @@ const world = {
   craftingOpen: false,
   inventoryOpen: false,
   inventoryReturnState: "playing",
+  inventoryMode: "backpack",
   questIndex: 0,
   questCompletedCount: 0,
   baseLevel: 0,
+  baseGateOpen: false,
   harvestClock: 0,
   started: performance.now(),
   state: "menu"
@@ -332,10 +374,26 @@ const safeZones = [
 ];
 
 const baseStages = [
-  { name: "Tent Camp", radius: SAFE_ZONE_RADIUS, heal: 7, armor: 9, stamina: 34, cost: null },
-  { name: "Fenced Camp", radius: 126, heal: 10, armor: 13, stamina: 42, cost: { wood: 80, scrap: 65 } },
-  { name: "Fortified Camp", radius: 166, heal: 13, armor: 18, stamina: 52, cost: { wood: 155, scrap: 120, parts: 25 } },
-  { name: "Survivor Outpost", radius: 214, heal: 17, armor: 24, stamina: 64, cost: { wood: 250, scrap: 210, parts: 65 } }
+  { name: "Level 1 - Tent Camp", radius: SAFE_ZONE_RADIUS, heal: 7, armor: 9, stamina: 34, cost: null },
+  { name: "Level 2 - Basic Fence Camp", radius: 116, heal: 9, armor: 12, stamina: 40, cost: { wood: 80, scrap: 65 } },
+  { name: "Level 3 - Barbed Fence Camp", radius: 136, heal: 10, armor: 14, stamina: 44, cost: { wood: 120, scrap: 95, parts: 12 } },
+  { name: "Level 4 - Storage Camp", radius: 154, heal: 12, armor: 16, stamina: 48, cost: { wood: 155, scrap: 120, parts: 24 } },
+  { name: "Level 5 - Two-Tent Camp", radius: 172, heal: 13, armor: 18, stamina: 52, cost: { wood: 190, scrap: 155, parts: 36, water: 30 } },
+  { name: "Level 6 - Watch Post", radius: 190, heal: 14, armor: 20, stamina: 56, cost: { wood: 230, scrap: 190, parts: 48, water: 45 } },
+  { name: "Level 7 - Reinforced Gate Camp", radius: 208, heal: 15, armor: 23, stamina: 60, cost: { wood: 275, scrap: 230, parts: 62, stone: 35 } },
+  { name: "Level 8 - Workshop Camp", radius: 226, heal: 17, armor: 26, stamina: 64, cost: { wood: 325, scrap: 275, parts: 80, stone: 55 } },
+  { name: "Level 9 - Barbed Outer Ring", radius: 244, heal: 18, armor: 29, stamina: 68, cost: { wood: 380, scrap: 325, parts: 100, stone: 80 } },
+  { name: "Level 10 - Survivor Camp", radius: 270, heal: 20, armor: 33, stamina: 74, cost: { wood: 445, scrap: 390, parts: 125, stone: 120, water: 75 } },
+  { name: "Level 11 - Scrap Wall Camp", radius: 288, heal: 22, armor: 37, stamina: 78, cost: { wood: 510, scrap: 465, parts: 155, stone: 165 } },
+  { name: "Level 12 - Water Collector Camp", radius: 306, heal: 24, armor: 41, stamina: 82, cost: { wood: 575, scrap: 545, parts: 190, stone: 210, water: 110 } },
+  { name: "Level 13 - Medical Tent", radius: 324, heal: 27, armor: 45, stamina: 88, cost: { wood: 650, scrap: 635, parts: 230, stone: 260, medicalEquipment: 2 } },
+  { name: "Level 14 - Guard Tower Camp", radius: 342, heal: 30, armor: 50, stamina: 94, cost: { wood: 730, scrap: 735, parts: 275, stone: 315, water: 145 } },
+  { name: "Level 15 - Reinforced Outpost", radius: 360, heal: 33, armor: 56, stamina: 100, cost: { wood: 820, scrap: 850, parts: 325, stone: 375 } },
+  { name: "Level 16 - Spike and Wire Line", radius: 378, heal: 36, armor: 62, stamina: 108, cost: { wood: 920, scrap: 980, parts: 380, stone: 445, water: 180 } },
+  { name: "Level 17 - Radio Camp", radius: 396, heal: 39, armor: 68, stamina: 116, cost: { wood: 1030, scrap: 1120, parts: 440, stone: 520, medicalEquipment: 3 } },
+  { name: "Level 18 - Fortified Compound", radius: 414, heal: 43, armor: 75, stamina: 124, cost: { wood: 1150, scrap: 1280, parts: 510, stone: 605, water: 225 } },
+  { name: "Level 19 - Survivor Stronghold", radius: 432, heal: 47, armor: 83, stamina: 132, cost: { wood: 1280, scrap: 1460, parts: 585, stone: 700, medicalEquipment: 4 } },
+  { name: "Level 20 - Last Haven", radius: 456, heal: 52, armor: 92, stamina: 142, cost: { wood: 1425, scrap: 1660, parts: 670, stone: 805, water: 280, medicalEquipment: 5 } }
 ];
 
 const structureTypes = {
@@ -883,7 +941,7 @@ function isPlayerInSafeZone() {
 }
 
 function canStandAt(x, y) {
-  return terrainAt(x, y) !== "water";
+  return terrainAt(x, y) !== "water" && !blocksBaseWall(x, y);
 }
 
 function techCost(item) {
@@ -906,6 +964,7 @@ function applyTechStats() {
 function applyBaseStats() {
   const stage = baseStages[world.baseLevel] || baseStages[0];
   safeZones[0].radius = stage.radius;
+  if (!baseHasGate()) world.baseGateOpen = false;
 }
 
 function resourceAmount(kind) {
@@ -957,7 +1016,20 @@ function spendResources(cost) {
 
 function formatCost(cost) {
   if (!cost) return "";
-  return Object.entries(cost).map(([kind, amount]) => `${amount} ${kind}`).join(", ");
+  return Object.entries(cost).map(([kind, amount]) => `${amount} ${resourceLabel(kind)}`).join(", ");
+}
+
+function resourceLabel(kind) {
+  const labels = {
+    medicalEquipment: "med kit",
+    parts: "parts",
+    scrap: "scrap",
+    wood: "wood",
+    stone: "stone",
+    water: "water",
+    ammo: "ammo"
+  };
+  return labels[kind] || kind;
 }
 
 function currentQuest() {
@@ -1084,6 +1156,133 @@ function isNearWorkbench() {
   return world.baseLevel >= 1 && dist(player.x, player.y, safeZones[0].x + 74, safeZones[0].y + 34) < 70;
 }
 
+function baseStashPosition() {
+  return { x: safeZones[0].x - 104, y: safeZones[0].y + 54 };
+}
+
+function isNearBaseStash() {
+  const stash = baseStashPosition();
+  return tech.stash.level > 0 && dist(player.x, player.y, stash.x, stash.y) < 58;
+}
+
+function baseHasGate() {
+  return world.baseLevel >= 9;
+}
+
+function baseWallHalfSize() {
+  return Math.max(184, (baseStages[world.baseLevel]?.radius || SAFE_ZONE_RADIUS) * 0.68);
+}
+
+function gateWorldPosition() {
+  const half = baseWallHalfSize();
+  return { x: safeZones[0].x, y: safeZones[0].y + half };
+}
+
+function gateOpeningWidth() {
+  return 156 + tech.gate.level * 18;
+}
+
+function isNearBaseGate() {
+  if (!baseHasGate()) return false;
+  const gate = gateWorldPosition();
+  return dist(player.x, player.y, gate.x, gate.y) < 92;
+}
+
+function toggleBaseGate() {
+  if (!isNearBaseGate()) return false;
+  world.baseGateOpen = !world.baseGateOpen;
+  flash(`Base gate ${world.baseGateOpen ? "opened" : "closed"}`);
+  saveProgress();
+  return true;
+}
+
+function pointInGateOpening(x, y, padding = 0) {
+  if (!baseHasGate()) return false;
+  const half = baseWallHalfSize();
+  const gateWidth = gateOpeningWidth() + padding * 2;
+  const gateDepth = 70 + padding * 2;
+  return Math.abs(x - safeZones[0].x) <= gateWidth / 2 && Math.abs(y - (safeZones[0].y + half)) <= gateDepth;
+}
+
+function blocksBaseWall(x, y) {
+  if (!baseHasGate()) return false;
+  const half = baseWallHalfSize();
+  const localX = x - safeZones[0].x;
+  const localY = y - safeZones[0].y;
+  const thickness = 20;
+  const insideOuter = Math.abs(localX) <= half + thickness && Math.abs(localY) <= half + thickness;
+  const insideInner = Math.abs(localX) < half - thickness && Math.abs(localY) < half - thickness;
+  if (!insideOuter || insideInner) return false;
+  if (world.baseGateOpen && pointInGateOpening(x, y, 18)) return false;
+  return true;
+}
+
+function movementUsesOpenGate(fromX, fromY, toX, toY, radius = 0) {
+  if (!baseHasGate() || !world.baseGateOpen) return false;
+  const gate = gateWorldPosition();
+  if (pointInGateOpening(fromX, fromY, radius) && pointInGateOpening(toX, toY, radius)) return true;
+  const dy = toY - fromY;
+  if (Math.abs(dy) < 0.001) return pointInGateOpening(toX, toY, radius);
+  const crossingT = (gate.y - fromY) / dy;
+  if (crossingT < 0 || crossingT > 1) return false;
+  const crossingX = fromX + (toX - fromX) * crossingT;
+  return Math.abs(crossingX - gate.x) <= gateOpeningWidth() / 2 + radius;
+}
+
+function crossesClosedBaseWall(fromX, fromY, toX, toY, radius = 0) {
+  if (!baseHasGate()) return false;
+  const fromInside = isInsideBaseCompound(fromX, fromY, radius);
+  const toInside = isInsideBaseCompound(toX, toY, radius);
+  if (fromInside === toInside) return false;
+  return !movementUsesOpenGate(fromX, fromY, toX, toY, radius);
+}
+
+function canMoveTo(fromX, fromY, toX, toY, radius = 0) {
+  if (terrainAt(toX, toY) === "water") return false;
+  if (crossesClosedBaseWall(fromX, fromY, toX, toY, radius)) return false;
+  const usingOpenGate = movementUsesOpenGate(fromX, fromY, toX, toY, radius);
+  const distance = Math.hypot(toX - fromX, toY - fromY);
+  const steps = Math.max(1, Math.ceil(distance / 8));
+  for (let i = 1; i <= steps; i += 1) {
+    const t = i / steps;
+    const x = fromX + (toX - fromX) * t;
+    const y = fromY + (toY - fromY) * t;
+    if (usingOpenGate && pointInGateOpening(x, y, radius)) continue;
+    if (blocksBaseWall(x, y)) return false;
+  }
+  return true;
+}
+
+function isInsideBaseCompound(x, y, padding = 0) {
+  if (!baseHasGate()) return true;
+  const half = baseWallHalfSize() - 24 + padding;
+  return Math.abs(x - safeZones[0].x) <= half && Math.abs(y - safeZones[0].y) <= half;
+}
+
+function baseWallSeparates(aX, aY, bX, bY) {
+  return baseHasGate() && isInsideBaseCompound(aX, aY, 0) !== isInsideBaseCompound(bX, bY, 0);
+}
+
+function openGateRouteTarget(fromX, fromY, targetX, targetY) {
+  if (!baseHasGate() || !world.baseGateOpen || !baseWallSeparates(fromX, fromY, targetX, targetY)) {
+    return { x: targetX, y: targetY };
+  }
+  if (pointInGateOpening(fromX, fromY, 42)) return { x: targetX, y: targetY };
+  const gate = gateWorldPosition();
+  const targetInside = isInsideBaseCompound(targetX, targetY, 0);
+  return {
+    x: gate.x,
+    y: gate.y + (targetInside ? -92 : 92)
+  };
+}
+
+function isPlayerProtectedSafeZone() {
+  const zone = getSafeZoneAt(player.x, player.y);
+  if (!zone) return false;
+  if (zone.id !== "base" || !baseHasGate()) return true;
+  return !world.baseGateOpen && isInsideBaseCompound(player.x, player.y, 8);
+}
+
 function updateCraftingButtons() {
   ui.craftAxeButton.disabled = player.tools.axe || !canAfford(toolRecipes.axe.cost);
   ui.craftPickaxeButton.disabled = player.tools.pickaxe || !canAfford(toolRecipes.pickaxe.cost);
@@ -1108,31 +1307,126 @@ function closeCraftingMenu() {
   ui.craftingMenu.hidden = true;
 }
 
-function inventoryItems() {
-  return [
-    { id: "scrap", name: "Scrap", amount: player.scrap, icon: "scrap" },
-    { id: "wood", name: "Wood", amount: player.wood, icon: "wood" },
-    { id: "stone", name: "Stone", amount: player.stone, icon: "stone" },
-    { id: "parts", name: "Parts", amount: player.parts, icon: "parts" },
-    { id: "water", name: "Water", amount: player.water, icon: "water" },
-    { id: "medicalEquipment", name: "Med Kit", amount: player.medicalEquipment, icon: "medical" },
-    player.antidote ? { id: "antidote", name: "Anti-dote", amount: "Found", icon: "antidote" } : null,
-    player.radio ? { id: "radio", name: "Radio", amount: "Found", icon: "radio" } : null,
-    { id: "ammo", name: "Ammo", amount: player.reserveAmmo, icon: "ammo" },
-    player.tools.axe ? { id: "axe", name: "Axe", amount: "Tool", icon: "axe" } : null,
-    player.tools.pickaxe ? { id: "pickaxe", name: "Pickaxe", amount: "Tool", icon: "pickaxe" } : null
-  ].filter(Boolean);
+const inventoryItemDefs = {
+  scrap: { name: "Scrap", icon: "scrap", transferable: true },
+  wood: { name: "Wood", icon: "wood", transferable: true },
+  stone: { name: "Stone", icon: "stone", transferable: true },
+  parts: { name: "Parts", icon: "parts", transferable: true },
+  water: { name: "Water", icon: "water", transferable: true },
+  medicalEquipment: { name: "Med Kit", icon: "medical", transferable: true },
+  ammo: { name: "Ammo", icon: "ammo", transferable: true },
+  antidote: { name: "Anti-dote", icon: "antidote", transferable: false, label: () => "Found" },
+  radio: { name: "Radio", icon: "radio", transferable: false, label: () => "Found" },
+  axe: { name: "Axe", icon: "axe", transferable: false, label: () => "Tool" },
+  pickaxe: { name: "Pickaxe", icon: "pickaxe", transferable: false, label: () => "Tool" }
+};
+
+function backpackAmount(id) {
+  if (id === "ammo") return player.reserveAmmo;
+  if (id === "antidote") return player.antidote ? 1 : 0;
+  if (id === "radio") return player.radio ? 1 : 0;
+  if (id === "axe" || id === "pickaxe") return player.tools[id] ? 1 : 0;
+  return Number(player[id]) || 0;
+}
+
+function setBackpackAmount(id, amount) {
+  if (id === "ammo") {
+    player.reserveAmmo = clamp(amount, 0, player.ammoCap);
+    return;
+  }
+  if (id in player) player[id] = Math.max(0, amount);
+}
+
+function stashAmount(id) {
+  return Number(baseStash[id]) || 0;
+}
+
+function setStashAmount(id, amount) {
+  if (id in baseStash) baseStash[id] = Math.max(0, amount);
+}
+
+function containerSlots(container) {
+  return container === "stash" ? stashSlots : backpackSlots;
+}
+
+function containerAmount(container, id) {
+  return container === "stash" ? stashAmount(id) : backpackAmount(id);
+}
+
+function setContainerAmount(container, id, amount) {
+  if (container === "stash") setStashAmount(id, amount);
+  else setBackpackAmount(id, amount);
+}
+
+function normalizeInventorySlots() {
+  normalizeSlotSet(backpackSlots, Object.keys(inventoryItemDefs).filter((id) => backpackAmount(id) > 0), BACKPACK_SLOT_COUNT);
+  normalizeSlotSet(stashSlots, Object.keys(baseStash).filter((id) => stashAmount(id) > 0), STASH_SLOT_COUNT);
+}
+
+function normalizeSlotSet(slots, activeIds, size) {
+  const active = new Set(activeIds);
+  for (let i = 0; i < size; i += 1) {
+    if (!active.has(slots[i])) slots[i] = null;
+  }
+  activeIds.forEach((id) => {
+    if (slots.includes(id)) return;
+    const emptyIndex = slots.findIndex((slot) => !slot);
+    if (emptyIndex >= 0) slots[emptyIndex] = id;
+  });
+}
+
+function restoreSlotLayout(slots, savedSlots, size) {
+  const validIds = new Set(Object.keys(inventoryItemDefs));
+  for (let i = 0; i < size; i += 1) {
+    const id = Array.isArray(savedSlots) ? savedSlots[i] : null;
+    slots[i] = validIds.has(id) ? id : null;
+  }
+  normalizeInventorySlots();
+}
+
+function inventorySlotItem(container, index) {
+  const id = containerSlots(container)[index];
+  if (!id || containerAmount(container, id) <= 0) return null;
+  const def = inventoryItemDefs[id];
+  const amount = containerAmount(container, id);
+  return {
+    id,
+    name: def.name,
+    icon: def.icon,
+    transferable: def.transferable,
+    amount: def.label ? def.label(amount) : amount
+  };
 }
 
 function updateInventoryMenu() {
   if (!ui.inventoryGrid) return;
-  ui.inventoryGrid.innerHTML = "";
-  const items = inventoryItems();
-  for (let i = 0; i < 16; i += 1) {
-    const item = items[i];
+  normalizeInventorySlots();
+  const stashVisible = world.inventoryMode === "stash" && tech.stash.level > 0;
+  ui.inventoryModeText.textContent = stashVisible ? "Base Stash" : "Backpack";
+  ui.inventoryMenu.classList.toggle("stash-open", stashVisible);
+  ui.stashColumn.hidden = !stashVisible;
+  renderInventoryGrid(ui.inventoryGrid, "backpack", BACKPACK_SLOT_COUNT);
+  if (stashVisible) renderInventoryGrid(ui.stashGrid, "stash", STASH_SLOT_COUNT);
+}
+
+function renderInventoryGrid(grid, container, size) {
+  if (!grid) return;
+  grid.innerHTML = "";
+  for (let i = 0; i < size; i += 1) {
+    const item = inventorySlotItem(container, i);
     const slot = document.createElement("div");
-    slot.className = `inventory-slot${item ? " filled" : ""}`;
+    const selected = inventorySelectedSlot?.container === container && inventorySelectedSlot?.index === i;
+    slot.className = `inventory-slot${item ? " filled" : ""}${selected ? " selected" : ""}`;
+    slot.dataset.container = container;
+    slot.dataset.index = i;
+    slot.addEventListener("click", handleInventorySlotClick);
+    slot.addEventListener("dragenter", allowInventoryDrop);
+    slot.addEventListener("dragover", allowInventoryDrop);
+    slot.addEventListener("drop", handleInventoryDrop);
     if (item) {
+      slot.draggable = true;
+      slot.addEventListener("dragstart", handleInventoryDragStart);
+      slot.addEventListener("dragend", handleInventoryDragEnd);
       slot.innerHTML = `
         <span class="inventory-icon ${item.icon}" aria-hidden="true"></span>
         <strong>${item.name}</strong>
@@ -1141,14 +1435,111 @@ function updateInventoryMenu() {
     } else {
       slot.innerHTML = "<small>Empty</small>";
     }
-    ui.inventoryGrid.append(slot);
+    grid.append(slot);
   }
 }
 
-function openInventoryMenu() {
+function allowInventoryDrop(event) {
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+}
+
+function handleInventoryDragStart(event) {
+  const slot = event.currentTarget;
+  inventorySelectedSlot = {
+    container: slot.dataset.container,
+    index: Number(slot.dataset.index)
+  };
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", JSON.stringify({
+    container: slot.dataset.container,
+    index: Number(slot.dataset.index)
+  }));
+}
+
+function handleInventoryDragEnd() {
+  inventorySelectedSlot = null;
+  updateInventoryMenu();
+}
+
+function handleInventoryDrop(event) {
+  event.preventDefault();
+  const target = event.currentTarget;
+  let source;
+  try {
+    source = JSON.parse(event.dataTransfer.getData("text/plain"));
+  } catch {
+    return;
+  }
+  inventorySelectedSlot = null;
+  moveInventorySlot(source.container, source.index, target.dataset.container, Number(target.dataset.index));
+}
+
+function handleInventorySlotClick(event) {
+  const slot = event.currentTarget;
+  const clicked = {
+    container: slot.dataset.container,
+    index: Number(slot.dataset.index)
+  };
+  const hasItem = Boolean(containerSlots(clicked.container)[clicked.index]);
+  if (!inventorySelectedSlot) {
+    if (!hasItem) return;
+    inventorySelectedSlot = clicked;
+    updateInventoryMenu();
+    return;
+  }
+  const source = inventorySelectedSlot;
+  inventorySelectedSlot = null;
+  moveInventorySlot(source.container, source.index, clicked.container, clicked.index);
+}
+
+function moveInventorySlot(fromContainer, fromIndex, toContainer, toIndex) {
+  const fromSlots = containerSlots(fromContainer);
+  const toSlots = containerSlots(toContainer);
+  const fromId = fromSlots[fromIndex];
+  const toId = toSlots[toIndex];
+  if (!fromId || (fromContainer === toContainer && fromIndex === toIndex)) {
+    updateInventoryMenu();
+    return;
+  }
+
+  if (fromContainer === toContainer) {
+    [fromSlots[fromIndex], fromSlots[toIndex]] = [fromSlots[toIndex], fromSlots[fromIndex]];
+    updateInventoryMenu();
+    saveProgress();
+    return;
+  }
+
+  if (!inventoryItemDefs[fromId]?.transferable || (toId && !inventoryItemDefs[toId]?.transferable)) {
+    flash("Quest items and tools stay in your backpack");
+    updateInventoryMenu();
+    return;
+  }
+
+  transferInventoryStack(fromContainer, toContainer, fromId);
+  if (toId && toId !== fromId) transferInventoryStack(toContainer, fromContainer, toId);
+  fromSlots[fromIndex] = toId && toId !== fromId ? toId : null;
+  toSlots[toIndex] = fromId;
+  normalizeInventorySlots();
+  updateInventoryMenu();
+  updateHud();
+  rebuildUpgradePanel();
+  saveProgress();
+}
+
+function transferInventoryStack(fromContainer, toContainer, id) {
+  const amount = containerAmount(fromContainer, id);
+  if (amount <= 0) return;
+  setContainerAmount(fromContainer, id, 0);
+  setContainerAmount(toContainer, id, containerAmount(toContainer, id) + amount);
+}
+
+function openInventoryMenu(mode = "backpack") {
   if (world.state !== "playing") return;
   world.inventoryReturnState = world.state;
   if (world.state === "playing") world.state = "paused";
+  world.inventoryMode = mode === "stash" && tech.stash.level > 0 ? "stash" : "backpack";
+  inventorySelectedSlot = null;
   world.inventoryOpen = true;
   ui.inventoryMenu.hidden = false;
   updateInventoryMenu();
@@ -1159,6 +1550,8 @@ function openInventoryMenu() {
 function closeInventoryMenu() {
   const shouldResume = world.state === "paused" && world.inventoryOpen && world.inventoryReturnState === "playing" && ui.pauseMenu.hidden;
   world.inventoryOpen = false;
+  world.inventoryMode = "backpack";
+  inventorySelectedSlot = null;
   ui.inventoryMenu.hidden = true;
   if (shouldResume) world.state = "playing";
 }
@@ -1540,9 +1933,12 @@ function rebuildUpgradePanel() {
     if (item.level >= item.max) {
       button.textContent = "Max";
       button.disabled = true;
+    } else if (item.requiresBaseLevel && world.baseLevel + 1 < item.requiresBaseLevel) {
+      button.textContent = `Base ${item.requiresBaseLevel}`;
+      button.disabled = true;
     } else {
       const cost = techCost(item);
-      button.textContent = `${cost}`;
+      button.textContent = `${cost} scrap`;
       button.disabled = player.scrap < cost;
       button.addEventListener("click", () => buyUpgrade(key));
     }
@@ -1579,6 +1975,7 @@ function upgradeBase() {
     return;
   }
   world.baseLevel += 1;
+  if (baseHasGate()) world.baseGateOpen = false;
   applyBaseStats();
   updateFogOfWar();
   rebuildUpgradePanel();
@@ -1590,6 +1987,10 @@ function upgradeBase() {
 function buyUpgrade(key) {
   const item = tech[key];
   if (!item || item.level >= item.max) return;
+  if (item.requiresBaseLevel && world.baseLevel + 1 < item.requiresBaseLevel) {
+    flash(`Requires base level ${item.requiresBaseLevel}`);
+    return;
+  }
   const cost = techCost(item);
   if (player.scrap < cost) {
     flash("Not enough scrap");
@@ -1601,6 +2002,7 @@ function buyUpgrade(key) {
   if (key === "armor") player.armor = 10000;
   if (key === "stamina") player.stamina = 10000;
   if (key === "ammo") player.reserveAmmo = 10000;
+  if (key === "stash") world.inventoryMode = "stash";
   applyTechStats();
   if (key === "weapon") {
     player.weaponIndex = Math.min(item.level, weapons.length - 1);
@@ -2046,6 +2448,11 @@ function addHitParticles(x, y, color, count) {
 
 function lootNearby() {
   if (world.activeSearch) return;
+  if (isNearBaseGate() && toggleBaseGate()) return;
+  if (isNearBaseStash()) {
+    openInventoryMenu("stash");
+    return;
+  }
   if (isNearWorkbench()) {
     openCraftingMenu();
     return;
@@ -2253,7 +2660,13 @@ function buildSaveData() {
       questIndex: world.questIndex,
       questCompletedCount: world.questCompletedCount,
       baseLevel: world.baseLevel,
+      baseGateOpen: world.baseGateOpen,
       harvestClock: world.harvestClock
+    },
+    baseStash: { ...baseStash },
+    inventorySlots: {
+      backpack: [...backpackSlots],
+      stash: [...stashSlots]
     },
     fog: Array.from(revealedFog),
     harvested: saveHarvestStates(),
@@ -2370,7 +2783,13 @@ function loadProgress(slot = activeSaveSlot) {
     world.questIndex = Number(data.world?.questIndex) || 0;
     world.questCompletedCount = Number(data.world?.questCompletedCount) || 0;
     world.baseLevel = clamp(Number(data.world?.baseLevel) || 0, 0, baseStages.length - 1);
+    world.baseGateOpen = Boolean(data.world?.baseGateOpen);
     world.harvestClock = Number(data.world?.harvestClock ?? data.world?.time) || 0;
+    Object.keys(baseStash).forEach((key) => {
+      baseStash[key] = Number(data.baseStash?.[key]) || 0;
+    });
+    restoreSlotLayout(backpackSlots, data.inventorySlots?.backpack, BACKPACK_SLOT_COUNT);
+    restoreSlotLayout(stashSlots, data.inventorySlots?.stash, STASH_SLOT_COUNT);
     world.activeSearch = null;
     closeCraftingMenu();
     closeInventoryMenu();
@@ -2477,6 +2896,12 @@ function clearProgress(slot = activeSaveSlot) {
   world.questIndex = 0;
   world.questCompletedCount = 0;
   world.baseLevel = 0;
+  world.baseGateOpen = false;
+  backpackSlots.fill(null);
+  stashSlots.fill(null);
+  Object.keys(baseStash).forEach((key) => {
+    baseStash[key] = 0;
+  });
   world.activeSearch = null;
   closeCraftingMenu();
   closeInventoryMenu();
@@ -2499,7 +2924,7 @@ function ensureWorldPopulated() {
 }
 
 function damagePlayer(amount) {
-  if (player.invulnerable > 0 || !player.alive || isPlayerInSafeZone()) return;
+  if (player.invulnerable > 0 || !player.alive || isPlayerProtectedSafeZone()) return;
   const reduction = player.armor > 0 ? 0.42 : 0;
   const hpDamage = Math.max(2, Math.round(amount * (1 - reduction)));
   const armorDamage = Math.min(player.armor, Math.ceil(amount * 0.55));
@@ -2867,8 +3292,8 @@ function updatePlayer(dt) {
     const speed = player.speed * speedMultiplier;
     const nextX = player.x + dx * speed * dt;
     const nextY = player.y + dy * speed * dt;
-    if (canStandAt(nextX, player.y)) player.x = nextX;
-    if (canStandAt(player.x, nextY)) player.y = nextY;
+    if (canMoveTo(player.x, player.y, nextX, player.y, player.radius)) player.x = nextX;
+    if (canMoveTo(player.x, player.y, player.x, nextY, player.radius)) player.y = nextY;
     if (canSprint) player.stamina = clamp(player.stamina - 24 * dt, 0, player.maxStamina);
   }
 
@@ -2887,7 +3312,7 @@ function updatePlayer(dt) {
   player.jumpCooldown = Math.max(0, player.jumpCooldown - dt);
 
   const safeZone = getSafeZoneAt(player.x, player.y);
-  if (safeZone) {
+  if (safeZone && (safeZone.id !== "base" || !baseHasGate() || isInsideBaseCompound(player.x, player.y, 8))) {
     const stage = safeZone.id === "base" ? baseStages[world.baseLevel] : baseStages[0];
     player.hp = clamp(player.hp + stage.heal * dt, 0, player.maxHp);
     player.armor = clamp(player.armor + stage.armor * dt, 0, player.maxArmor);
@@ -2953,10 +3378,11 @@ function updateBullets(dt) {
 
 function updateZombies(dt) {
   const safeZone = getSafeZoneAt(player.x, player.y);
-  const playerSafe = Boolean(safeZone);
+  const playerSafe = isPlayerProtectedSafeZone();
   for (const zombie of zombies) {
     const d = dist(player.x, player.y, zombie.x, zombie.y);
-    if (playerSafe) {
+    const separatedByClosedGate = baseWallSeparates(player.x, player.y, zombie.x, zombie.y) && !world.baseGateOpen;
+    if (playerSafe || separatedByClosedGate) {
       zombie.aggro = false;
       zombie.alertTimer = 0;
     } else if (d < zombie.detectRange) {
@@ -2981,7 +3407,10 @@ function updateZombies(dt) {
     let moveX = crowding.x * 0.45;
     let moveY = crowding.y * 0.45;
     if (zombie.aggro) {
-      const angle = Math.atan2(player.y - zombie.y, player.x - zombie.x);
+      const target = openGateRouteTarget(zombie.x, zombie.y, player.x, player.y);
+      const targetX = target.x;
+      const targetY = target.y;
+      const angle = Math.atan2(targetY - zombie.y, targetX - zombie.x);
       moveX += Math.cos(angle);
       moveY += Math.sin(angle);
     } else if (safeZone && dist(zombie.x, zombie.y, safeZone.x, safeZone.y) < safeZone.radius + 150) {
@@ -3003,10 +3432,11 @@ function updateZombies(dt) {
     if (Math.abs(moveX) > 0.08) zombie.facing = moveX > 0 ? 1 : -1;
     const nextX = zombie.x + (moveX / moveLength) * speed * dt;
     const nextY = zombie.y + (moveY / moveLength) * speed * dt;
-    if (canStandAt(nextX, zombie.y)) zombie.x = nextX;
+    if (canMoveTo(zombie.x, zombie.y, nextX, zombie.y, zombie.radius)) zombie.x = nextX;
     else zombie.wanderAngle += Math.PI * 0.5;
-    if (canStandAt(zombie.x, nextY)) zombie.y = nextY;
+    if (canMoveTo(zombie.x, zombie.y, zombie.x, nextY, zombie.radius)) zombie.y = nextY;
     else zombie.wanderAngle += Math.PI * 0.5;
+    damageZombieOnBaseWire(zombie, dt);
 
     const limit = exploredRadius() + 600;
     const fromBase = Math.hypot(zombie.x, zombie.y);
@@ -3019,11 +3449,35 @@ function updateZombies(dt) {
     zombie.attackCooldown = Math.max(0, zombie.attackCooldown - dt);
     zombie.hitFlash = Math.max(0, zombie.hitFlash - dt);
 
-    if (!playerSafe && zombie.aggro && d < player.radius + zombie.radius + 4 && zombie.attackCooldown <= 0) {
+    if (zombie.hp > 0 && !playerSafe && zombie.aggro && d < player.radius + zombie.radius + 4 && zombie.attackCooldown <= 0) {
       zombie.attackCooldown = 0.82;
       damagePlayer(zombie.damage);
     }
   }
+  for (let i = zombies.length - 1; i >= 0; i -= 1) {
+    if (zombies[i].hp > 0) continue;
+    addHitParticles(zombies[i].x, zombies[i].y, "#5f8f45", 10);
+    zombies.splice(i, 1);
+  }
+}
+
+function damageZombieOnBaseWire(zombie, dt) {
+  const wireLevel = Math.max(tech.barbedWire.level, world.baseLevel >= 2 ? 1 : 0, world.baseLevel >= 8 ? 2 : 0, world.baseLevel >= 15 ? 3 : 0);
+  if (wireLevel <= 0) return;
+  let touchingWire = false;
+  if (baseHasGate()) {
+    const half = baseWallHalfSize();
+    const localX = zombie.x - safeZones[0].x;
+    const localY = zombie.y - safeZones[0].y;
+    touchingWire = Math.max(Math.abs(localX), Math.abs(localY)) > half - 30 && Math.max(Math.abs(localX), Math.abs(localY)) < half + 34 && !pointInGateOpening(zombie.x, zombie.y, 26);
+  } else {
+    const fenceRadius = safeZones[0].radius - 10;
+    const baseDistance = dist(zombie.x, zombie.y, safeZones[0].x, safeZones[0].y);
+    touchingWire = Math.abs(baseDistance - fenceRadius) < 24;
+  }
+  if (!touchingWire) return;
+  zombie.hp -= (4 + wireLevel * 3) * dt;
+  zombie.hitFlash = Math.max(zombie.hitFlash, 0.06);
 }
 
 function updateCratesAndDrops(dt) {
@@ -3036,7 +3490,15 @@ function updateCratesAndDrops(dt) {
   world.lootPrompt = null;
   world.approachLabel = null;
   if (world.activeSearch) return;
-  if (isNearWorkbench()) {
+  if (isNearBaseGate()) {
+    const gate = gateWorldPosition();
+    world.lootPrompt = { x: gate.x, y: gate.y - 42, label: world.baseGateOpen ? "E CLOSE" : "E OPEN" };
+  }
+  if (!world.lootPrompt && isNearBaseStash()) {
+    const stash = baseStashPosition();
+    world.lootPrompt = { x: stash.x, y: stash.y - 32, label: "E STASH" };
+  }
+  if (!world.lootPrompt && isNearWorkbench()) {
     world.lootPrompt = { x: safeZones[0].x + 74, y: safeZones[0].y + 12, label: "E" };
   }
   for (const landmark of majorLandmarks) {
@@ -3921,6 +4383,57 @@ function drawBase() {
   safeZones.forEach((zone) => drawSafeZoneCamp(zone));
 }
 
+function drawMainBaseWall() {
+  if (!baseHasGate()) return;
+  const half = baseWallHalfSize();
+  const gateHalfWidth = gateOpeningWidth() / 2;
+  const gate = gateWorldPosition();
+  const topLeft = worldToScreen(safeZones[0].x - half, safeZones[0].y - half);
+  const bottomRight = worldToScreen(safeZones[0].x + half, safeZones[0].y + half);
+  const gateLeft = worldToScreen(gate.x - gateHalfWidth, gate.y);
+  const gateRight = worldToScreen(gate.x + gateHalfWidth, gate.y);
+  ctx.save();
+  ctx.lineCap = "square";
+  ctx.lineWidth = 18;
+  ctx.strokeStyle = world.baseLevel >= 14 ? "#7e8880" : world.baseLevel >= 10 ? "#6f766d" : "#6b5d48";
+  ctx.beginPath();
+  ctx.moveTo(topLeft.x, topLeft.y);
+  ctx.lineTo(bottomRight.x, topLeft.y);
+  ctx.lineTo(bottomRight.x, bottomRight.y);
+  ctx.moveTo(topLeft.x, topLeft.y);
+  ctx.lineTo(topLeft.x, bottomRight.y);
+  ctx.moveTo(topLeft.x, bottomRight.y);
+  ctx.lineTo(gateLeft.x, gateLeft.y);
+  ctx.moveTo(gateRight.x, gateRight.y);
+  ctx.lineTo(bottomRight.x, bottomRight.y);
+  ctx.stroke();
+
+  const wireLevel = Math.max(tech.barbedWire.level, world.baseLevel >= 15 ? 3 : world.baseLevel >= 8 ? 2 : 0);
+  if (wireLevel > 0) {
+    ctx.lineWidth = 3 + wireLevel;
+    ctx.strokeStyle = "#b7c4bd";
+    ctx.setLineDash([10, 9]);
+    ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+  }
+
+  const gateLevel = Math.max(tech.gate.level, 1);
+  ctx.setLineDash([]);
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = gateLevel >= 3 ? "#4f5962" : gateLevel >= 2 ? "#8a938c" : "#7b4f2e";
+  ctx.beginPath();
+  if (world.baseGateOpen) {
+    ctx.moveTo(gateLeft.x, gateLeft.y);
+    ctx.lineTo(gateLeft.x - 44, gateLeft.y + 48);
+    ctx.moveTo(gateRight.x, gateRight.y);
+    ctx.lineTo(gateRight.x + 44, gateRight.y + 48);
+  } else {
+    ctx.moveTo(gateLeft.x, gateLeft.y);
+    ctx.lineTo(gateRight.x, gateRight.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawSafeZoneCamp(zone) {
   const base = worldToScreen(zone.x, zone.y);
   const campfireScreen = worldToScreen(zone.x + 42, zone.y + 30);
@@ -3935,7 +4448,9 @@ function drawSafeZoneCamp(zone) {
   ctx.stroke();
   ctx.restore();
 
-  if (isMainBase && stage >= 1) {
+  if (isMainBase) drawMainBaseWall();
+
+  if (isMainBase && stage >= 1 && !baseHasGate()) {
     const fenceRadius = zone.radius - 10;
     const segments = stage >= 3 ? 20 : 14;
     for (let i = 0; i < segments; i += 1) {
@@ -3958,6 +4473,10 @@ function drawSafeZoneCamp(zone) {
     if (isMainBase && stage >= 1) {
       drawPropImage("barrel", zone.x + 74, zone.y + 34, 36);
       drawPropImage("chest", zone.x + 102, zone.y + 42, 40);
+      if (tech.stash.level > 0) {
+        const stash = baseStashPosition();
+        drawPropImage("chest", stash.x, stash.y, 48, 1, true);
+      }
       const bench = worldToScreen(zone.x + 76, zone.y + 56);
       ctx.save();
       ctx.fillStyle = "#7b4f2e";

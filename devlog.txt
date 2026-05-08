@@ -205,3 +205,42 @@ Validation Used
 - git diff --check
 - Checked that every getElementById reference in game.js exists in index.html.
 - node --check was not available on this PC because node is not installed/in PATH.
+
+2026-05-08 Base Level 20 / Stash Update
+
+Base Progression
+- Expanded the base upgrade ladder from 4 stages to 20 levels.
+- Added named progression from Level 1 Tent Camp through Level 20 Last Haven.
+- Higher levels now require larger mixes of wood, scrap, parts, stone, water, and medical equipment.
+- Level 10 introduces the square stone-wall perimeter and base gate.
+
+Gate and Defense Systems
+- Added a level-10 base gate that can be opened or closed with E near the gate.
+- When the gate is open, the main base no longer prevents zombie attacks.
+- Closed stone walls block movement through the perimeter except through the gate when opened.
+- Added Barbed Wire Fencing tech that increases zombie damage near base defenses.
+
+Base Tech Tree
+- Added Barbed Wire Fencing upgrade.
+- Added Base Gate upgrade path for wood, sheet metal, and armor-plated gate improvements.
+- Added Base Stash upgrade.
+
+Inventory / Stash
+- Added a base stash with its own 4x4 grid.
+- Backpack remains a 4x4 grid.
+- Opening the base stash shows backpack and stash grids side by side.
+- Items can be dragged to reorder slots.
+- Transferable supplies can be dragged between backpack and base stash.
+
+Validation Used
+- Headless Edge DOM smoke test confirmed the upgraded tech tree and stash DOM render.
+- git diff --check
+- Checked that every getElementById reference in game.js exists in index.html.
+
+2026-05-08 Base Perimeter Collision Fix
+
+Base Walls and Gate
+- Stone-wall base movement now checks the whole movement path instead of only the destination point.
+- Player and zombies can no longer cross the level-10 stone perimeter except through the open gate.
+- Closed gate now blocks zombie pursuit into the base.
+- Open gate lets zombies route toward the gate and enter if the player forgets to close it.
