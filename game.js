@@ -35,6 +35,9 @@ const ui = {
   toast: document.getElementById("toast"),
   adminMenu: document.getElementById("adminMenu"),
   adminTimeButtons: document.querySelectorAll("[data-time]"),
+  adminBaseLevel: document.getElementById("adminBaseLevel"),
+  adminBaseDownButton: document.getElementById("adminBaseDownButton"),
+  adminBaseUpButton: document.getElementById("adminBaseUpButton"),
   mainMenu: document.getElementById("mainMenu"),
   pauseMenu: document.getElementById("pauseMenu"),
   loadGameButton: document.getElementById("loadGameButton"),
@@ -123,6 +126,14 @@ const FOG_CELL_SIZE = 160;
 const FOG_REVEAL_RADIUS = 430;
 const FOG_SAFE_RADIUS = 230;
 const HARVEST_REGROW_STAGE = 180;
+const BASE_CAMP_SPRITE_SCALE = 0.37;
+const BASE_CAMP_REFERENCE_WIDTH = 454;
+const BASE_CAMP_REFERENCE_HEIGHT = 473;
+const BASE_GATE_LEVEL_10_WIDTH = 1138;
+const BASE_GATE_LEVEL_10_HEIGHT = 1373;
+const BASE_GATE_LEVEL_10_X_RATIO = 0.5;
+const BASE_GATE_LEVEL_10_BOTTOM_OFFSET = 20;
+const BASE_WALL_THICKNESS = 22;
 const music = {
   day: new Audio(`music/DayMusic.mp3?v=${MUSIC_VERSION}`),
   night: new Audio(`music/NightMusic.mp3?v=${MUSIC_VERSION}`),
@@ -147,6 +158,7 @@ const terrainAssets = {
   watchtower: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Watchtower Short.png"),
   fenceHorizontal: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Fence Horizontal.png"),
   fenceVertical: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Wooden Fence Vertical.png"),
+  baseCamp: createTerrainAssetList(15, (index) => `sprites/Base-Camp/Level-${index}.png`),
   treeLarge: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_prop - Tree Large.png"),
   treeMedium: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Medium.png"),
   treeSmall: createTerrainAssetList(1, () => "sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Tree Small.png"),
@@ -928,6 +940,23 @@ function setTimePreset(preset) {
   updateHud();
 }
 
+function setAdminBaseLevel(delta) {
+  const nextLevel = clamp(world.baseLevel + delta, 0, baseStages.length - 1);
+  if (nextLevel === world.baseLevel) {
+    flash(delta > 0 ? "Base already max level" : "Base already level 1");
+    return;
+  }
+  world.baseLevel = nextLevel;
+  if (!baseHasGate()) world.baseGateOpen = false;
+  applyBaseStats();
+  updateFogOfWar();
+  rebuildUpgradePanel();
+  updateQuestProgress();
+  updateHud();
+  saveProgress();
+  flash(`Admin base level: ${world.baseLevel + 1}`);
+}
+
 function getSafeZoneAt(x, y) {
   return safeZones.find((zone) => dist(x, y, zone.x, zone.y) <= zone.radius) || null;
 }
@@ -1169,17 +1198,77 @@ function baseHasGate() {
   return world.baseLevel >= 9;
 }
 
+function baseHasPerimeter() {
+  return world.baseLevel >= 1;
+}
+
+function baseCampLevel() {
+  return clamp(world.baseLevel + 1, 1, terrainAssets.baseCamp.length);
+}
+
+function baseCampBottomLeftAnchor() {
+  return {
+    x: safeZones[0].x - (BASE_CAMP_REFERENCE_WIDTH * BASE_CAMP_SPRITE_SCALE) / 2,
+    y: safeZones[0].y + (BASE_CAMP_REFERENCE_HEIGHT * BASE_CAMP_SPRITE_SCALE) / 2
+  };
+}
+
+function baseCampSpriteBounds() {
+  const level = baseCampLevel();
+  const asset = terrainAssets.baseCamp[level - 1];
+  const anchor = baseCampBottomLeftAnchor();
+  if (!asset?.loaded) {
+    const half = Math.max(184, (baseStages[world.baseLevel]?.radius || SAFE_ZONE_RADIUS) * 0.68);
+    return {
+      level,
+      loaded: false,
+      left: anchor.x,
+      right: anchor.x + half * 2,
+      top: anchor.y - half * 2,
+      bottom: anchor.y,
+      width: half * 2,
+      height: half * 2,
+      wallInset: BASE_WALL_THICKNESS
+    };
+  }
+
+  const width = asset.image.width * BASE_CAMP_SPRITE_SCALE;
+  const height = asset.image.height * BASE_CAMP_SPRITE_SCALE;
+  const wallInset = level >= 10 ? (20 / asset.image.width) * width : BASE_WALL_THICKNESS;
+  return {
+    level,
+    loaded: true,
+    left: anchor.x,
+    right: anchor.x + width,
+    top: anchor.y - height,
+    bottom: anchor.y,
+    width,
+    height,
+    wallInset
+  };
+}
+
 function baseWallHalfSize() {
+  const bounds = baseCampSpriteBounds();
+  if (baseHasGate()) return Math.max(bounds.width, bounds.height) / 2;
+  const level = Math.min(world.baseLevel + 1, terrainAssets.baseCamp.length);
+  const asset = terrainAssets.baseCamp[level - 1];
+  if (level >= 10 && asset?.loaded) {
+    return Math.max(184, (asset.image.width * BASE_CAMP_SPRITE_SCALE - 52) / 2);
+  }
   return Math.max(184, (baseStages[world.baseLevel]?.radius || SAFE_ZONE_RADIUS) * 0.68);
 }
 
 function gateWorldPosition() {
-  const half = baseWallHalfSize();
-  return { x: safeZones[0].x, y: safeZones[0].y + half };
+  const anchor = baseCampBottomLeftAnchor();
+  return {
+    x: anchor.x + BASE_GATE_LEVEL_10_WIDTH * BASE_CAMP_SPRITE_SCALE * BASE_GATE_LEVEL_10_X_RATIO,
+    y: anchor.y - BASE_GATE_LEVEL_10_BOTTOM_OFFSET * BASE_CAMP_SPRITE_SCALE
+  };
 }
 
 function gateOpeningWidth() {
-  return 156 + tech.gate.level * 18;
+  return baseHasGate() ? 156 + tech.gate.level * 18 : 132;
 }
 
 function isNearBaseGate() {
@@ -1197,28 +1286,26 @@ function toggleBaseGate() {
 }
 
 function pointInGateOpening(x, y, padding = 0) {
-  if (!baseHasGate()) return false;
-  const half = baseWallHalfSize();
+  if (!baseHasPerimeter()) return false;
+  const gate = gateWorldPosition();
   const gateWidth = gateOpeningWidth() + padding * 2;
   const gateDepth = 70 + padding * 2;
-  return Math.abs(x - safeZones[0].x) <= gateWidth / 2 && Math.abs(y - (safeZones[0].y + half)) <= gateDepth;
+  return Math.abs(x - gate.x) <= gateWidth / 2 && Math.abs(y - gate.y) <= gateDepth;
 }
 
 function blocksBaseWall(x, y) {
-  if (!baseHasGate()) return false;
-  const half = baseWallHalfSize();
-  const localX = x - safeZones[0].x;
-  const localY = y - safeZones[0].y;
-  const thickness = 20;
-  const insideOuter = Math.abs(localX) <= half + thickness && Math.abs(localY) <= half + thickness;
-  const insideInner = Math.abs(localX) < half - thickness && Math.abs(localY) < half - thickness;
+  if (!baseHasPerimeter()) return false;
+  const bounds = baseCampSpriteBounds();
+  const thickness = BASE_WALL_THICKNESS;
+  const insideOuter = x >= bounds.left - thickness && x <= bounds.right + thickness && y >= bounds.top - thickness && y <= bounds.bottom + thickness;
+  const insideInner = x > bounds.left + thickness && x < bounds.right - thickness && y > bounds.top + thickness && y < bounds.bottom - thickness;
   if (!insideOuter || insideInner) return false;
-  if (world.baseGateOpen && pointInGateOpening(x, y, 18)) return false;
+  if ((!baseHasGate() || world.baseGateOpen) && pointInGateOpening(x, y, 18)) return false;
   return true;
 }
 
 function movementUsesOpenGate(fromX, fromY, toX, toY, radius = 0) {
-  if (!baseHasGate() || !world.baseGateOpen) return false;
+  if (!baseHasPerimeter() || (baseHasGate() && !world.baseGateOpen)) return false;
   const gate = gateWorldPosition();
   if (pointInGateOpening(fromX, fromY, radius) && pointInGateOpening(toX, toY, radius)) return true;
   const dy = toY - fromY;
@@ -1230,7 +1317,7 @@ function movementUsesOpenGate(fromX, fromY, toX, toY, radius = 0) {
 }
 
 function crossesClosedBaseWall(fromX, fromY, toX, toY, radius = 0) {
-  if (!baseHasGate()) return false;
+  if (!baseHasPerimeter()) return false;
   const fromInside = isInsideBaseCompound(fromX, fromY, radius);
   const toInside = isInsideBaseCompound(toX, toY, radius);
   if (fromInside === toInside) return false;
@@ -1254,13 +1341,14 @@ function canMoveTo(fromX, fromY, toX, toY, radius = 0) {
 }
 
 function isInsideBaseCompound(x, y, padding = 0) {
-  if (!baseHasGate()) return true;
-  const half = baseWallHalfSize() - 24 + padding;
-  return Math.abs(x - safeZones[0].x) <= half && Math.abs(y - safeZones[0].y) <= half;
+  if (!baseHasPerimeter()) return true;
+  const bounds = baseCampSpriteBounds();
+  const inset = BASE_WALL_THICKNESS - padding;
+  return x >= bounds.left + inset && x <= bounds.right - inset && y >= bounds.top + inset && y <= bounds.bottom - inset;
 }
 
 function baseWallSeparates(aX, aY, bX, bY) {
-  return baseHasGate() && isInsideBaseCompound(aX, aY, 0) !== isInsideBaseCompound(bX, bY, 0);
+  return baseHasPerimeter() && isInsideBaseCompound(aX, aY, 0) !== isInsideBaseCompound(bX, bY, 0);
 }
 
 function openGateRouteTarget(fromX, fromY, targetX, targetY) {
@@ -1277,10 +1365,10 @@ function openGateRouteTarget(fromX, fromY, targetX, targetY) {
 }
 
 function isPlayerProtectedSafeZone() {
+  if (baseHasPerimeter() && isInsideBaseCompound(player.x, player.y, 8)) return !baseHasGate() || !world.baseGateOpen;
   const zone = getSafeZoneAt(player.x, player.y);
   if (!zone) return false;
-  if (zone.id !== "base" || !baseHasGate()) return true;
-  return !world.baseGateOpen && isInsideBaseCompound(player.x, player.y, 8);
+  return zone.id !== "base" || !baseHasPerimeter();
 }
 
 function updateCraftingButtons() {
@@ -3312,8 +3400,9 @@ function updatePlayer(dt) {
   player.jumpCooldown = Math.max(0, player.jumpCooldown - dt);
 
   const safeZone = getSafeZoneAt(player.x, player.y);
-  if (safeZone && (safeZone.id !== "base" || !baseHasGate() || isInsideBaseCompound(player.x, player.y, 8))) {
-    const stage = safeZone.id === "base" ? baseStages[world.baseLevel] : baseStages[0];
+  const inBaseCompound = baseHasPerimeter() && isInsideBaseCompound(player.x, player.y, 8);
+  if (inBaseCompound || (safeZone && (safeZone.id !== "base" || !baseHasPerimeter()))) {
+    const stage = inBaseCompound || safeZone.id === "base" ? baseStages[world.baseLevel] : baseStages[0];
     player.hp = clamp(player.hp + stage.heal * dt, 0, player.maxHp);
     player.armor = clamp(player.armor + stage.armor * dt, 0, player.maxArmor);
     player.stamina = clamp(player.stamina + stage.stamina * dt, 0, player.maxStamina);
@@ -3465,11 +3554,11 @@ function damageZombieOnBaseWire(zombie, dt) {
   const wireLevel = Math.max(tech.barbedWire.level, world.baseLevel >= 2 ? 1 : 0, world.baseLevel >= 8 ? 2 : 0, world.baseLevel >= 15 ? 3 : 0);
   if (wireLevel <= 0) return;
   let touchingWire = false;
-  if (baseHasGate()) {
-    const half = baseWallHalfSize();
-    const localX = zombie.x - safeZones[0].x;
-    const localY = zombie.y - safeZones[0].y;
-    touchingWire = Math.max(Math.abs(localX), Math.abs(localY)) > half - 30 && Math.max(Math.abs(localX), Math.abs(localY)) < half + 34 && !pointInGateOpening(zombie.x, zombie.y, 26);
+  if (baseHasPerimeter()) {
+    const bounds = baseCampSpriteBounds();
+    const nearOuter = zombie.x >= bounds.left - 34 && zombie.x <= bounds.right + 34 && zombie.y >= bounds.top - 34 && zombie.y <= bounds.bottom + 34;
+    const insideCore = zombie.x > bounds.left + 30 && zombie.x < bounds.right - 30 && zombie.y > bounds.top + 30 && zombie.y < bounds.bottom - 30;
+    touchingWire = nearOuter && !insideCore && !pointInGateOpening(zombie.x, zombie.y, 26);
   } else {
     const fenceRadius = safeZones[0].radius - 10;
     const baseDistance = dist(zombie.x, zombie.y, safeZones[0].x, safeZones[0].y);
@@ -3625,6 +3714,9 @@ function updateHud() {
   }
   ui.levelText.textContent = `Level ${player.level} - ${player.xp}/${player.level * 60} XP`;
   ui.distanceText.textContent = baseStages[world.baseLevel].name;
+  if (ui.adminBaseLevel) ui.adminBaseLevel.textContent = `Level ${world.baseLevel + 1}`;
+  if (ui.adminBaseDownButton) ui.adminBaseDownButton.disabled = world.baseLevel <= 0;
+  if (ui.adminBaseUpButton) ui.adminBaseUpButton.disabled = world.baseLevel >= baseStages.length - 1;
   updateMissionHud();
   updateBaseUpgradeButton();
   updateCraftingButtons();
@@ -4385,6 +4477,8 @@ function drawBase() {
 
 function drawMainBaseWall() {
   if (!baseHasGate()) return;
+  const spriteLevel = Math.min(world.baseLevel + 1, terrainAssets.baseCamp.length);
+  const usingBaseCampSprite = Boolean(terrainAssets.baseCamp[spriteLevel - 1]?.loaded);
   const half = baseWallHalfSize();
   const gateHalfWidth = gateOpeningWidth() / 2;
   const gate = gateWorldPosition();
@@ -4394,26 +4488,28 @@ function drawMainBaseWall() {
   const gateRight = worldToScreen(gate.x + gateHalfWidth, gate.y);
   ctx.save();
   ctx.lineCap = "square";
-  ctx.lineWidth = 18;
-  ctx.strokeStyle = world.baseLevel >= 14 ? "#7e8880" : world.baseLevel >= 10 ? "#6f766d" : "#6b5d48";
-  ctx.beginPath();
-  ctx.moveTo(topLeft.x, topLeft.y);
-  ctx.lineTo(bottomRight.x, topLeft.y);
-  ctx.lineTo(bottomRight.x, bottomRight.y);
-  ctx.moveTo(topLeft.x, topLeft.y);
-  ctx.lineTo(topLeft.x, bottomRight.y);
-  ctx.moveTo(topLeft.x, bottomRight.y);
-  ctx.lineTo(gateLeft.x, gateLeft.y);
-  ctx.moveTo(gateRight.x, gateRight.y);
-  ctx.lineTo(bottomRight.x, bottomRight.y);
-  ctx.stroke();
+  if (!usingBaseCampSprite) {
+    ctx.lineWidth = 18;
+    ctx.strokeStyle = world.baseLevel >= 14 ? "#7e8880" : world.baseLevel >= 10 ? "#6f766d" : "#6b5d48";
+    ctx.beginPath();
+    ctx.moveTo(topLeft.x, topLeft.y);
+    ctx.lineTo(bottomRight.x, topLeft.y);
+    ctx.lineTo(bottomRight.x, bottomRight.y);
+    ctx.moveTo(topLeft.x, topLeft.y);
+    ctx.lineTo(topLeft.x, bottomRight.y);
+    ctx.moveTo(topLeft.x, bottomRight.y);
+    ctx.lineTo(gateLeft.x, gateLeft.y);
+    ctx.moveTo(gateRight.x, gateRight.y);
+    ctx.lineTo(bottomRight.x, bottomRight.y);
+    ctx.stroke();
 
-  const wireLevel = Math.max(tech.barbedWire.level, world.baseLevel >= 15 ? 3 : world.baseLevel >= 8 ? 2 : 0);
-  if (wireLevel > 0) {
-    ctx.lineWidth = 3 + wireLevel;
-    ctx.strokeStyle = "#b7c4bd";
-    ctx.setLineDash([10, 9]);
-    ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+    const wireLevel = Math.max(tech.barbedWire.level, world.baseLevel >= 15 ? 3 : world.baseLevel >= 8 ? 2 : 0);
+    if (wireLevel > 0) {
+      ctx.lineWidth = 3 + wireLevel;
+      ctx.strokeStyle = "#b7c4bd";
+      ctx.setLineDash([10, 9]);
+      ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+    }
   }
 
   const gateLevel = Math.max(tech.gate.level, 1);
@@ -4434,6 +4530,22 @@ function drawMainBaseWall() {
   ctx.restore();
 }
 
+function drawBaseCampSprite(zone, stage) {
+  const level = clamp(stage + 1, 1, terrainAssets.baseCamp.length);
+  const asset = terrainAssets.baseCamp[level - 1];
+  if (!asset?.loaded) return false;
+
+  const bounds = baseCampSpriteBounds();
+  const topLeft = worldToScreen(bounds.left, bounds.top);
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(asset.image, topLeft.x, topLeft.y, bounds.width, bounds.height);
+  ctx.restore();
+  ctx.imageSmoothingEnabled = false;
+  return true;
+}
+
 function drawSafeZoneCamp(zone) {
   const base = worldToScreen(zone.x, zone.y);
   const campfireScreen = worldToScreen(zone.x + 42, zone.y + 30);
@@ -4447,6 +4559,11 @@ function drawSafeZoneCamp(zone) {
   ctx.arc(base.x, base.y, zone.radius, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
+
+  if (isMainBase && drawBaseCampSprite(zone, stage)) {
+    if (baseHasGate()) drawMainBaseWall();
+    return;
+  }
 
   if (isMainBase) drawMainBaseWall();
 
@@ -5157,6 +5274,8 @@ function initInput() {
   ui.adminTimeButtons.forEach((button) => {
     button.addEventListener("click", () => setTimePreset(button.dataset.time));
   });
+  ui.adminBaseDownButton?.addEventListener("click", () => setAdminBaseLevel(-1));
+  ui.adminBaseUpButton?.addEventListener("click", () => setAdminBaseLevel(1));
   ui.restartButton.addEventListener("click", restartRun);
   ui.loadGameButton.addEventListener("click", () => loadGameFromMenu(latestSaveSlot()));
   ui.loadSavesButton.addEventListener("click", () => toggleSaveSlots(ui.saveSlotList));

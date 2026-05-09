@@ -244,3 +244,25 @@ Base Walls and Gate
 - Player and zombies can no longer cross the level-10 stone perimeter except through the open gate.
 - Closed gate now blocks zombie pursuit into the base.
 - Open gate lets zombies route toward the gate and enter if the player forgets to close it.
+
+2026-05-09 Base Camp Sprite Pass
+
+Base Visuals
+- Added support for the new sprites/Base-Camp Level-1.png through Level-15.png files.
+- Main base now draws the matching base camp sprite for upgrade levels 1 through 15.
+- Levels 16 through 20 currently continue using the Level 15 visual until later sprites are supplied.
+- Levels 10 through 15 keep the current interactive gate drawn into the wall opening so the open/close gameplay remains active.
+- Base camp sprites now use a consistent art scale so shared elements like the campfire keep the same proportions as the base grows.
+- Walled base recovery/protection now follows the square compound area instead of the older circular safe-zone radius.
+- Base perimeter collision now follows the rendered sprite rectangle instead of a separate abstract safe-zone shape.
+- Levels 2 through 9 use a fixed open entrance in the lower border so the player is not trapped before the interactive gate unlocks.
+- Levels 10 through 15 place the current interactive gate into the same border opening using the rendered sprite bounds.
+- Added admin Base Upgrades controls with Downgrade and Upgrade buttons for faster base-level testing.
+- Base camp sprites now share a fixed bottom-left world anchor, so upgrades expand upward and rightward without shifting the lower-left corner.
+- Interactive gate placement now uses the fixed Level 10 offset from the bottom-left base anchor, so it stays in the same world position through later base upgrades.
+- Tried matching the main base safe-zone glow and dashed indicator to the rendered sprite dimensions, then rolled it back after it broke the visible base rendering.
+- The main base now uses the earlier circular safe-zone indicator again while the sprite, gate, and perimeter systems stay intact.
+- Restored the previous bottom-left base anchor so early-level base sprites draw around the camp instead of showing only an empty sprite corner.
+- Fixed the missing fallback draw coordinate after the rollback so the draw loop no longer stops with a base variable ReferenceError.
+- Bumped the game.js cache key so local preview and GitHub Pages pull the fixed script instead of the stale broken one.
+- Local preview was confirmed stable again after the rollback and cache-key bump.

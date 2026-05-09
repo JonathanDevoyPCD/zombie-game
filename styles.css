@@ -894,6 +894,16 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 
+.admin-group {
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-group > span,
+.admin-group > strong {
+  padding: 0 12px;
+}
+
 .admin-menu span {
   display: block;
   color: var(--yellow);
