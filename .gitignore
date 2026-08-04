@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.playwright-cli/
+output/playwright/
+test-results/
+apps/server/data/*.json
+apps/server/data/*.tmp

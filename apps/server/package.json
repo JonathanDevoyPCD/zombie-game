@@ -1,0 +1,25 @@
+{
+  "name": "@last-survivor/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "node esbuild.config.mjs",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@colyseus/core": "^0.17.46",
+    "@colyseus/schema": "^4.0.30",
+    "@colyseus/ws-transport": "^0.17.13",
+    "@last-survivor/content": "*",
+    "@last-survivor/shared": "*",
+    "@last-survivor/simulation": "*"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "tsx": "^4.23.5"
+  }
+}

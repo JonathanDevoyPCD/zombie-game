@@ -1,0 +1,28 @@
+{
+  "name": "last-survivor",
+  "version": "2.0.0-alpha.0",
+  "private": true,
+  "description": "Last Survivor V2 open-world co-op survival game",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names server,client \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "npm run dev -w @last-survivor/client",
+    "dev:server": "npm run dev -w @last-survivor/server",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

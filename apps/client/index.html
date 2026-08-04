@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101713" />
+    <link rel="icon" href="data:," />
+    <title>Last Survivor V2</title>
+  </head>
+  <body>
+    <main id="app">
+      <div id="game" aria-label="Last Survivor game world"></div>
+      <section class="hud" aria-live="polite">
+        <div class="brand">
+          <strong>LAST SURVIVOR</strong>
+          <span>V2 FOUNDATION</span>
+        </div>
+        <div class="connection">
+          <span id="connection-dot" class="connection-dot"></span>
+          <span id="connection-status">Connecting...</span>
+        </div>
+        <div class="world-readout">
+          <span id="world-id">DEV-WORLD</span>
+          <span id="biome-name">Grasslands</span>
+          <span id="player-count">0 / 4 SURVIVORS</span>
+          <span id="frame-rate">-- FPS</span>
+        </div>
+      </section>
+      <section class="inventory-readout" aria-label="Carried supplies">
+        <strong>FIELD PACK</strong>
+        <div class="health-readout">
+          <span>Health</span>
+          <div class="health-track"><i id="health-fill"></i></div>
+          <b id="health-value">100 / 100</b>
+        </div>
+        <div class="inventory-grid">
+          <span><b id="inventory-scrap">0</b> Scrap</span>
+          <span><b id="inventory-parts">0</b> Parts</span>
+          <span><b id="inventory-food">0</b> Food</span>
+          <span><b id="inventory-medicine">0</b> Medicine</span>
+        </div>
+      </section>
+      <div id="interaction-prompt" class="interaction-prompt" hidden>
+        <kbd>E</kbd>
+        <span id="interaction-text"></span>
+      </div>
+      <div id="loot-toast" class="loot-toast" hidden>
+        <span>LOOT SECURED</span>
+        <strong id="loot-toast-text"></strong>
+      </div>
+      <div id="combat-toast" class="combat-toast" hidden></div>
+      <div class="controls">WASD TO MOVE &nbsp; MOUSE TO AIM &nbsp; LEFT CLICK TO FIRE</div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

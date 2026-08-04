@@ -1,0 +1,290 @@
+:root {
+  color: #f2f0df;
+  background: #101713;
+  font-family: Inter, Arial, sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app,
+#game {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+}
+
+.hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.brand,
+.connection,
+.world-readout,
+.controls,
+.interaction-prompt,
+.inventory-readout,
+.loot-toast,
+.combat-toast {
+  border: 1px solid #3d4d42;
+  border-radius: 6px;
+  background: rgb(16 23 19 / 92%);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 22%);
+}
+
+.health-readout {
+  display: grid;
+  grid-template-columns: 42px 1fr auto;
+  gap: 7px;
+  align-items: center;
+  margin-top: 9px;
+  color: #aab6ad;
+  font-size: 9px;
+}
+
+.health-readout b {
+  color: #f2f0df;
+  font-size: 9px;
+}
+
+.health-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #29322d;
+}
+
+.health-track i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #b9574f;
+  transform-origin: left center;
+  transition: transform 100ms linear;
+}
+
+.inventory-readout {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 218px;
+  padding: 11px 12px;
+  pointer-events: none;
+}
+
+.inventory-readout > strong,
+.loot-toast span {
+  color: #e3cb70;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 12px;
+  margin-top: 8px;
+  color: #aab6ad;
+  font-size: 10px;
+}
+
+.inventory-grid span {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.inventory-grid b {
+  min-width: 18px;
+  color: #f2f0df;
+  font-size: 12px;
+}
+
+.loot-toast {
+  position: fixed;
+  top: 104px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 210px;
+  padding: 10px 14px;
+  text-align: center;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.loot-toast[hidden] {
+  display: none;
+}
+
+.loot-toast strong {
+  color: #f2f0df;
+  font-size: 12px;
+}
+
+.loot-toast.is-leaving {
+  opacity: 0;
+  transform: translate(-50%, -5px);
+}
+
+.combat-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 10px 14px;
+  color: #f2f0df;
+  font-size: 11px;
+  text-align: center;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.combat-toast[hidden] {
+  display: none;
+}
+
+.combat-toast.is-leaving {
+  opacity: 0;
+  transform: translate(-50%, -5px);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 11px 14px;
+}
+
+.brand strong {
+  color: #e3cb70;
+  font-size: 15px;
+}
+
+.brand span,
+.world-readout,
+.connection,
+.controls {
+  color: #aab6ad;
+  font-size: 11px;
+}
+
+.interaction-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 8px 13px 8px 8px;
+  color: #f2f0df;
+  font-size: 12px;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.interaction-prompt[hidden] {
+  display: none;
+}
+
+.interaction-prompt kbd {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid #718078;
+  border-radius: 4px;
+  background: #29322d;
+  color: #e3cb70;
+  font: 700 12px Inter, Arial, sans-serif;
+}
+
+.interaction-prompt.is-status kbd {
+  display: none;
+}
+
+.brand span {
+  margin-top: 3px;
+}
+
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 13px;
+}
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b44f47;
+}
+
+.connection-dot.is-online {
+  background: #72b875;
+  box-shadow: 0 0 0 3px rgb(114 184 117 / 16%);
+}
+
+.world-readout {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding: 9px 13px;
+}
+
+.world-readout span:first-child {
+  color: #f2f0df;
+}
+
+.controls {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  padding: 9px 12px;
+  pointer-events: none;
+}
+
+@media (max-width: 600px) {
+  .hud {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    grid-template-columns: 1fr;
+  }
+
+  .connection {
+    min-height: 38px;
+  }
+
+  .world-readout {
+    gap: 8px;
+  }
+
+  .inventory-readout {
+    top: auto;
+    right: 8px;
+    bottom: 52px;
+    width: 190px;
+  }
+}

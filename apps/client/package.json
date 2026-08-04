@@ -1,0 +1,23 @@
+{
+  "name": "@last-survivor/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@colyseus/sdk": "^0.17.43",
+    "@last-survivor/content": "*",
+    "@last-survivor/shared": "*",
+    "@last-survivor/simulation": "*",
+    "@last-survivor/worldgen": "*",
+    "phaser": "3.90.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.6"
+  }
+}
