@@ -7,6 +7,7 @@ import {
   inventoryTotals,
   moveInventoryStack,
   removeInventoryItemAt,
+  removeInventoryBundle,
 } from "../src/inventory/inventory";
 
 describe("authoritative inventory operations", () => {
@@ -49,5 +50,15 @@ describe("authoritative inventory operations", () => {
     addInventoryItem(slots, "stone", 15);
     expect(removeInventoryItemAt(slots, 0, 6)).toEqual({ itemId: "stone", quantity: 6 });
     expect(slots[0]).toMatchObject({ itemId: "stone", quantity: 9 });
+  });
+
+  it("spends a build cost atomically across multiple stacks", () => {
+    const slots = emptyInventorySlots();
+    addInventoryItem(slots, "wood", 7);
+    expect(moveInventoryStack(slots, 0, 2, 3)).toBe(true);
+    expect(removeInventoryBundle(slots, { wood: 5 })).toBe(true);
+    expect(inventoryTotals(slots).wood).toBe(2);
+    expect(removeInventoryBundle(slots, { wood: 3, stone: 1 })).toBe(false);
+    expect(inventoryTotals(slots).wood).toBe(2);
   });
 });

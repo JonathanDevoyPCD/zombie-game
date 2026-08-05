@@ -15,6 +15,8 @@ function loadedSpriteUrl(relativePath: string): string {
 export const SPRITE_ASSETS = {
   structures: {
     regularHouse: loadedSpriteUrl("Structures/regular-house.png"),
+    woodWallHorizontal: loadedSpriteUrl("Structures/wood-wall-horizontal.png"),
+    woodWallVertical: loadedSpriteUrl("Structures/wood-wall-vertical.png"),
   },
   containers: {
     chest: loadedSpriteUrl("Containers/chest.png"),
@@ -36,6 +38,16 @@ export const SPRITE_ASSETS = {
       { length: 10 },
       (_, index) => loadedSpriteUrl(`Terrain/Rocks/rock-${String(index + 1).padStart(2, "0")}.png`),
     ),
+    resources: {
+      trees: Array.from(
+        { length: 3 },
+        (_, index) => loadedSpriteUrl(`Terrain/Resources/tree-${String(index + 1).padStart(2, "0")}.png`),
+      ),
+      stones: Array.from(
+        { length: 3 },
+        (_, index) => loadedSpriteUrl(`Terrain/Resources/stone-${String(index + 1).padStart(2, "0")}.png`),
+      ),
+    },
   },
   players: {
     raider1: {

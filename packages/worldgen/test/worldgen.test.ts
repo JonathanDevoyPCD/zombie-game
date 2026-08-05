@@ -5,6 +5,7 @@ import {
   CHUNK_TILES,
   generateChunk,
   generateChunkProps,
+  generateChunkResources,
   sampleTile,
   worldToChunk,
 } from "../src/index";
@@ -50,5 +51,12 @@ describe("BiomeGen", () => {
       expect(prop.variant).toBeGreaterThanOrEqual(0);
       expect(prop.variant).toBeLessThan(10);
     });
+  });
+
+  it("generates deterministic harvestable resources outside the starting camp", () => {
+    const first = generateChunkResources("resource-seed", 1, 0);
+    expect(generateChunkResources("resource-seed", 1, 0)).toEqual(first);
+    expect(first.every((resource) => Math.hypot(resource.x, resource.y) >= 230)).toBe(true);
+    expect(first.every((resource) => resource.variant >= 0 && resource.variant < 3)).toBe(true);
   });
 });

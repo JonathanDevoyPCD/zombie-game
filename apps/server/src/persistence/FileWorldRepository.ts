@@ -35,21 +35,27 @@ function legacyInventorySlots(value: unknown): Array<{ index: number; itemId: st
 
 function migrateLegacyDocument(
   source: Record<string, unknown>,
-  sourceVersion: 1 | 2 | 3,
+  sourceVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7,
 ): PersistenceDocument {
   const legacyWorlds = source.worlds as Record<string, Record<string, unknown>>;
   const worlds = Object.fromEntries(
     Object.entries(legacyWorlds).map(([worldId, legacyWorld]) => {
       const legacySurvivors = legacyWorld.survivors as Record<string, Record<string, unknown>>;
       const survivors = Object.fromEntries(
-        Object.entries(legacySurvivors).map(([survivorId, survivor]) => [
-          survivorId,
-          {
+        Object.entries(legacySurvivors).map(([survivorId, survivor]) => {
+          const inventorySlots = legacyInventorySlots(survivor.inventory);
+          return [survivorId, {
             ...survivor,
             health: sourceVersion === 1 ? 100 : survivor.health,
-            inventory: { slots: legacyInventorySlots(survivor.inventory) },
-          },
-        ]),
+            stamina: sourceVersion >= 7 ? survivor.stamina : 100,
+            flashlight: sourceVersion >= 7 ? survivor.flashlight === true : false,
+            starterKitGranted: sourceVersion >= 6
+              ? survivor.starterKitGranted === true
+              : sourceVersion === 5
+                && inventorySlots.some((slot) => slot.itemId === "wood" && slot.quantity > 0),
+            inventory: { slots: inventorySlots },
+          }];
+        }),
       );
       const legacyZombies = sourceVersion === 1
         ? {}
@@ -63,7 +69,14 @@ function migrateLegacyDocument(
           },
         ]),
       );
-      return [worldId, { ...legacyWorld, survivors, zombies, pickups: {} }];
+      return [worldId, {
+        ...legacyWorld,
+        survivors,
+        zombies,
+        pickups: sourceVersion >= 4 ? legacyWorld.pickups ?? {} : {},
+        structures: sourceVersion >= 5 ? legacyWorld.structures ?? {} : {},
+        resources: {},
+      }];
     }),
   );
 
@@ -110,7 +123,15 @@ export class FileWorldRepository implements WorldRepository {
 
     const parsed = JSON.parse(source) as Record<string, unknown>;
     if (
-      (parsed.schemaVersion === 1 || parsed.schemaVersion === 2 || parsed.schemaVersion === 3)
+      (
+        parsed.schemaVersion === 1
+        || parsed.schemaVersion === 2
+        || parsed.schemaVersion === 3
+        || parsed.schemaVersion === 4
+        || parsed.schemaVersion === 5
+        || parsed.schemaVersion === 6
+        || parsed.schemaVersion === 7
+      )
       && parsed.worlds
     ) {
       return migrateLegacyDocument(parsed, parsed.schemaVersion);

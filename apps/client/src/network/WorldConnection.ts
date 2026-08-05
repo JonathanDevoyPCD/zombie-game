@@ -4,6 +4,8 @@ import {
   ServerMessage,
   WORLD_ROOM,
   type CombatEvent,
+  type BuildEvent,
+  type BuildPlaceInput,
   type ContainerSnapshot,
   type FireWeaponInput,
   type InventoryDropInput,
@@ -13,6 +15,8 @@ import {
   type JoinWorldOptions,
   type MovementInput,
   type PlayerSnapshot,
+  type PlacedStructureSnapshot,
+  type ResourceNodeSnapshot,
   type ZombieSnapshot,
   type WorldPickupSnapshot,
 } from "@last-survivor/shared";
@@ -35,6 +39,8 @@ interface NetworkWorldState {
   containers: Map<string, ContainerSnapshot>;
   zombies: Map<string, ZombieSnapshot>;
   pickups: Map<string, WorldPickupSnapshot>;
+  structures: Map<string, PlacedStructureSnapshot>;
+  resources: Map<string, ResourceNodeSnapshot>;
 }
 
 export interface WorldSnapshot {
@@ -46,11 +52,14 @@ export interface WorldSnapshot {
   containers: ContainerSnapshot[];
   zombies: ZombieSnapshot[];
   pickups: WorldPickupSnapshot[];
+  structures: PlacedStructureSnapshot[];
+  resources: ResourceNodeSnapshot[];
 }
 
 type SnapshotListener = (snapshot: WorldSnapshot) => void;
 type CombatEventListener = (event: CombatEvent) => void;
 type InventoryEventListener = (event: InventoryEvent) => void;
+type BuildEventListener = (event: BuildEvent) => void;
 
 const endpoint = import.meta.env.VITE_SERVER_URL ?? "http://127.0.0.1:2567";
 
@@ -60,22 +69,28 @@ export class WorldConnection {
   private listener: SnapshotListener | null = null;
   private combatEventListener: CombatEventListener | null = null;
   private inventoryEventListener: InventoryEventListener | null = null;
+  private buildEventListener: BuildEventListener | null = null;
 
   async connect(
     options: JoinWorldOptions,
     listener: SnapshotListener,
     combatEventListener?: CombatEventListener,
     inventoryEventListener?: InventoryEventListener,
+    buildEventListener?: BuildEventListener,
   ): Promise<void> {
     this.listener = listener;
     this.combatEventListener = combatEventListener ?? null;
     this.inventoryEventListener = inventoryEventListener ?? null;
+    this.buildEventListener = buildEventListener ?? null;
     this.room = await this.client.joinOrCreate<NetworkWorldState>(WORLD_ROOM, options);
     this.room.onMessage(ServerMessage.COMBAT_EVENT, (event: CombatEvent) => {
       this.combatEventListener?.(event);
     });
     this.room.onMessage(ServerMessage.INVENTORY_EVENT, (event: InventoryEvent) => {
       this.inventoryEventListener?.(event);
+    });
+    this.room.onMessage(ServerMessage.BUILD_EVENT, (event: BuildEvent) => {
+      this.buildEventListener?.(event);
     });
     this.room.onStateChange(() => this.publish());
     this.room.onLeave(() => {
@@ -109,6 +124,14 @@ export class WorldConnection {
     this.room?.send(ClientMessage.INVENTORY_DROP, input);
   }
 
+  placeStructure(input: BuildPlaceInput): void {
+    this.room?.send(ClientMessage.BUILD_PLACE, input);
+  }
+
+  toggleFlashlight(): void {
+    this.room?.send(ClientMessage.FLASHLIGHT_TOGGLE);
+  }
+
   async disconnect(): Promise<void> {
     await this.room?.leave();
     this.room = null;
@@ -137,6 +160,10 @@ export class WorldConnection {
         activeSearchId: player.activeSearchId,
         health: player.health,
         maxHealth: player.maxHealth,
+        stamina: player.stamina,
+        maxStamina: player.maxStamina,
+        sprinting: player.sprinting,
+        flashlight: player.flashlight,
         inventory: {
           scrap: player.scrap,
           parts: player.parts,
@@ -199,6 +226,37 @@ export class WorldConnection {
       });
     });
 
+    const structures: PlacedStructureSnapshot[] = [];
+    state.structures?.forEach((structure) => {
+      structures.push({
+        id: structure.id,
+        buildableId: structure.buildableId,
+        x: structure.x,
+        y: structure.y,
+        orientation: structure.orientation,
+        placedBy: structure.placedBy,
+      });
+    });
+
+    const resources: ResourceNodeSnapshot[] = [];
+    state.resources?.forEach((resource) => {
+      if (resource.kind !== "tree" && resource.kind !== "stone") {
+        return;
+      }
+      resources.push({
+        id: resource.id,
+        kind: resource.kind,
+        variant: resource.variant,
+        x: resource.x,
+        y: resource.y,
+        available: resource.available,
+        respawnAt: resource.respawnAt,
+        harvestingBy: resource.harvestingBy,
+        harvestingByName: resource.harvestingByName,
+        harvestProgress: resource.harvestProgress,
+      });
+    });
+
     this.listener({
       connected: true,
       sessionId: this.room.sessionId,
@@ -208,6 +266,8 @@ export class WorldConnection {
       containers,
       zombies,
       pickups,
+      structures,
+      resources,
     });
   }
 
@@ -225,6 +285,8 @@ export class WorldConnection {
       containers: [],
       zombies: [],
       pickups: [],
+      structures: [],
+      resources: [],
     });
   }
 }

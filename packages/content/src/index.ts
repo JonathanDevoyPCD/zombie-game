@@ -28,3 +28,4 @@ export const BIOMES: Record<BiomeId, BiomeDefinition> = {
 export * from "./world";
 export * from "./combat";
 export * from "./items";
+export * from "./buildables";

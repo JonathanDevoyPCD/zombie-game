@@ -1,35 +1,52 @@
 import {
   ALL_BUILDING_CONTAINERS,
   BIOMES,
+  BUILDABLES,
   BUILDINGS,
   ITEMS,
   OVERWORLD_SPACE_ID,
   PLAYER_COLLISION_RADIUS,
   STARTING_SAFE_ZONE_RADIUS,
+  ZOMBIE_COLLISION_RADIUS,
+  buildableCollider,
+  buildableCollidersConflict,
   buildingByInteriorSpace,
   buildingContainerById,
   isItemId,
+  isBuildableId,
+  isBuildOrientation,
   movementEnvironmentForSpace,
+  snapBuildCoordinate,
+  type BuildOrientation,
   type ResolvedBuildingDefinition,
 } from "@last-survivor/content";
 import {
   INPUT_STEP_SECONDS,
+  type BuildEvent,
   type CombatEvent,
   type ContainerSnapshot,
   type InventorySnapshot,
   type InventoryEvent,
   type MovementInput,
   type PlayerSnapshot,
+  type PlacedStructureSnapshot,
+  type ResourceNodeSnapshot,
   type ZombieSnapshot,
   type WorldPickupSnapshot,
 } from "@last-survivor/shared";
-import { integrateMovementWithCollisions } from "@last-survivor/simulation";
+import {
+  DEFAULT_MOVE_SPEED,
+  SPRINT_MOVE_SPEED,
+  integrateMovementWithCollisions,
+} from "@last-survivor/simulation";
 import {
   CHUNK_SIZE,
   CHUNK_TILES,
   TILE_SIZE,
   generateChunk,
   generateChunkProps,
+  RESOURCE_INTERACTION_RADIUS,
+  resourceCollisionRect,
   sampleTile,
   worldToChunk,
 } from "@last-survivor/worldgen";
@@ -45,8 +62,12 @@ import {
   updateAreaReadout,
   updateConnectionStatus,
   updateFrameRate,
+  updateFlashlight,
   updateHealth,
   updateInventory,
+  updateMinimap,
+  updateSignalReadout,
+  updateStamina,
   updateWorldReadout,
 } from "../ui/hud";
 import {
@@ -57,6 +78,7 @@ import {
   toggleInventory,
   updateInventoryMenu,
 } from "../ui/inventory";
+import { clearBuildEvent, showBuildEvent, updateBuildToolbar } from "../ui/build";
 
 interface PlayerVisual {
   container: Phaser.GameObjects.Container;
@@ -69,7 +91,10 @@ interface PlayerVisual {
   searchBarBackground: Phaser.GameObjects.Rectangle;
   searchBarFill: Phaser.GameObjects.Rectangle;
   searchLabel: Phaser.GameObjects.Text;
-  facingMarker: Phaser.GameObjects.Triangle;
+  facing: number;
+  sprinting: boolean;
+  flashlight: boolean;
+  flashlightGlow: Phaser.GameObjects.Graphics;
   lastVisualX: number;
   lastVisualY: number;
   animationLockedUntil: number;
@@ -102,6 +127,14 @@ interface PickupVisual {
   spaceId: string;
 }
 
+interface StructureVisual {
+  image: Phaser.GameObjects.Image;
+}
+
+interface ResourceVisual {
+  image: Phaser.GameObjects.Image;
+}
+
 type VisibleGameObject = Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Visible;
 
 const INPUT_STEP_MS = INPUT_STEP_SECONDS * 1000;
@@ -109,6 +142,8 @@ const MAX_PREDICTION_STEPS_PER_FRAME = 5;
 const REMOTE_INTERPOLATION_RATE = 14;
 const HOUSE_TEXTURE_KEY = "house-48-exterior";
 const CHEST_TEXTURE_KEY = "house-48-chest";
+const WOOD_WALL_HORIZONTAL_TEXTURE_KEY = "structure:wood-wall:horizontal";
+const WOOD_WALL_VERTICAL_TEXTURE_KEY = "structure:wood-wall:vertical";
 const itemTextureKey = (itemId: string): string => `item:${itemId}`;
 const PLAYER_TEXTURE_KEYS = {
   idle: "player:raider-1:idle",
@@ -119,6 +154,27 @@ const zombieTextureKey = (type: number, action: string): string => `zombie:${typ
 
 function distanceBetween(left: { x: number; y: number }, right: { x: number; y: number }): number {
   return Math.hypot(left.x - right.x, left.y - right.y);
+}
+
+function rectanglesOverlap(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+  padding = 0,
+): boolean {
+  return left.x < right.x + right.width + padding
+    && left.x + left.width + padding > right.x
+    && left.y < right.y + right.height + padding
+    && left.y + left.height + padding > right.y;
+}
+
+function circleOverlapsRect(
+  circle: { x: number; y: number },
+  radius: number,
+  rect: { x: number; y: number; width: number; height: number },
+): boolean {
+  const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+  const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+  return (circle.x - closestX) ** 2 + (circle.y - closestY) ** 2 < radius ** 2;
 }
 
 function stableDepthOffset(id: string): number {
@@ -145,11 +201,19 @@ export class GameScene extends Phaser.Scene {
   private readonly containerVisuals = new Map<string, ContainerVisual>();
   private readonly pickups = new Map<string, WorldPickupSnapshot>();
   private readonly pickupVisuals = new Map<string, PickupVisual>();
+  private readonly structures = new Map<string, PlacedStructureSnapshot>();
+  private readonly structureVisuals = new Map<string, StructureVisual>();
+  private readonly resources = new Map<string, ResourceNodeSnapshot>();
+  private readonly resourceVisuals = new Map<string, ResourceVisual>();
   private readonly exteriorBuildings: Phaser.GameObjects.Image[] = [];
   private readonly interiorObjectsBySpace = new Map<string, VisibleGameObject[]>();
   private cursors!: Record<"up" | "down" | "left" | "right", Phaser.Input.Keyboard.Key>;
   private interactKey!: Phaser.Input.Keyboard.Key;
   private inventoryKey!: Phaser.Input.Keyboard.Key;
+  private buildKey!: Phaser.Input.Keyboard.Key;
+  private rotateBuildKey!: Phaser.Input.Keyboard.Key;
+  private sprintKey!: Phaser.Input.Keyboard.Key;
+  private flashlightKey!: Phaser.Input.Keyboard.Key;
   private safeZoneVisual!: Phaser.GameObjects.Graphics;
   private localSessionId = "";
   private currentSpaceId = OVERWORLD_SPACE_ID;
@@ -169,6 +233,21 @@ export class GameScene extends Phaser.Scene {
   private isTransitioning = false;
   private previousInventory: InventorySnapshot | null = null;
   private localHealth = 0;
+  private localStamina = 100;
+  private buildModeActive = false;
+  private buildOrientation: BuildOrientation = "horizontal";
+  private buildPreview!: Phaser.GameObjects.Image;
+  private buildPreviewValid = false;
+  private buildInvalidReason = "";
+  private readonly clearHeldKeys = (): void => {
+    this.input.keyboard?.resetKeys();
+    this.inputAccumulator = 0;
+  };
+  private readonly handleVisibilityChange = (): void => {
+    if (document.hidden) {
+      this.clearHeldKeys();
+    }
+  };
 
   constructor() {
     super("world");
@@ -177,6 +256,8 @@ export class GameScene extends Phaser.Scene {
   preload(): void {
     this.load.image(HOUSE_TEXTURE_KEY, SPRITE_ASSETS.structures.regularHouse);
     this.load.image(CHEST_TEXTURE_KEY, SPRITE_ASSETS.containers.chest);
+    this.load.image(WOOD_WALL_HORIZONTAL_TEXTURE_KEY, SPRITE_ASSETS.structures.woodWallHorizontal);
+    this.load.image(WOOD_WALL_VERTICAL_TEXTURE_KEY, SPRITE_ASSETS.structures.woodWallVertical);
     Object.entries(SPRITE_ASSETS.items).forEach(([itemId, assetUrl]) => {
       this.load.image(itemTextureKey(itemId), assetUrl);
     });
@@ -185,6 +266,12 @@ export class GameScene extends Phaser.Scene {
     });
     SPRITE_ASSETS.terrain.rocks.forEach((assetUrl, index) => {
       this.load.image(`ambient:rock:${index}`, assetUrl);
+    });
+    SPRITE_ASSETS.terrain.resources.trees.forEach((assetUrl, index) => {
+      this.load.image(`resource:tree:${index}`, assetUrl);
+    });
+    SPRITE_ASSETS.terrain.resources.stones.forEach((assetUrl, index) => {
+      this.load.image(`resource:stone:${index}`, assetUrl);
     });
     Object.entries(SPRITE_ASSETS.players.raider1).forEach(([action, assetUrl]) => {
       this.load.spritesheet(PLAYER_TEXTURE_KEYS[action as keyof typeof PLAYER_TEXTURE_KEYS], assetUrl, {
@@ -213,6 +300,12 @@ export class GameScene extends Phaser.Scene {
     }) as Record<"up" | "down" | "left" | "right", Phaser.Input.Keyboard.Key>;
     this.interactKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.inventoryKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.I);
+    this.buildKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+    this.rotateBuildKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+    this.sprintKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
+    this.flashlightKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+    window.addEventListener("blur", this.clearHeldKeys);
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
     initializeInventoryUi({
       move: (fromIndex, toIndex, quantity) => {
         this.connection.moveInventory({
@@ -231,15 +324,25 @@ export class GameScene extends Phaser.Scene {
       },
     });
     this.input.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
+      if (pointer.button === 2 && this.buildModeActive) {
+        this.setBuildMode(false);
+        return;
+      }
       if (pointer.button === 0) {
-        this.fireAtPointer(pointer);
+        if (this.buildModeActive) {
+          this.placeBuildPreview();
+        } else {
+          this.fireAtPointer(pointer);
+        }
       }
     });
+    this.input.mouse?.disableContextMenu();
 
     this.cameras.main.setBackgroundColor(0x101713);
     this.cameras.main.setZoom(1.35);
     this.createCharacterAnimations();
     this.createExteriorObjects();
+    this.createBuildPreview();
     this.createInteriorObjects();
     this.renderTerrain(0, 0);
     this.applySpacePresentation();
@@ -254,18 +357,34 @@ export class GameScene extends Phaser.Scene {
         (snapshot) => this.applySnapshot(snapshot),
         (event) => this.handleCombatEvent(event),
         (event) => this.handleInventoryEvent(event),
+        (event) => this.handleBuildEvent(event),
       )
       .catch((error: unknown) => {
         console.error("Unable to connect to world server", error);
         updateConnectionStatus(false);
       });
 
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => void this.connection.disconnect());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener("blur", this.clearHeldKeys);
+      document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+      void this.connection.disconnect();
+    });
   }
 
   update(_time: number, delta: number): void {
     if (Phaser.Input.Keyboard.JustDown(this.inventoryKey)) {
+      this.setBuildMode(false);
       toggleInventory();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.buildKey) && !isInventoryOpen()) {
+      this.setBuildMode(!this.buildModeActive);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.rotateBuildKey) && this.buildModeActive) {
+      this.buildOrientation = this.buildOrientation === "horizontal" ? "vertical" : "horizontal";
+      clearBuildEvent();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.flashlightKey) && !isInventoryOpen()) {
+      this.connection.toggleFlashlight();
     }
     if (
       Phaser.Input.Keyboard.JustDown(this.interactKey)
@@ -288,6 +407,7 @@ export class GameScene extends Phaser.Scene {
     if (localPlayer) {
       this.updateLocalAim(localPlayer);
       this.updateLocalPresentation(localPlayer);
+      this.updateBuildPreview(localPlayer);
     }
   }
 
@@ -340,6 +460,141 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private createBuildPreview(): void {
+    this.buildPreview = this.add
+      .image(0, 0, WOOD_WALL_HORIZONTAL_TEXTURE_KEY)
+      .setAlpha(0.72)
+      .setVisible(false);
+    this.updateBuildPreviewTexture();
+  }
+
+  private updateBuildPreviewTexture(): void {
+    const definition = BUILDABLES["wood-wall"];
+    const horizontal = this.buildOrientation === "horizontal";
+    this.buildPreview.setTexture(
+      horizontal ? WOOD_WALL_HORIZONTAL_TEXTURE_KEY : WOOD_WALL_VERTICAL_TEXTURE_KEY,
+    );
+    if (horizontal) {
+      this.buildPreview.setDisplaySize(
+        definition.displayLength,
+        definition.displayLength * this.buildPreview.height / this.buildPreview.width,
+      );
+    } else {
+      this.buildPreview.setDisplaySize(
+        definition.displayLength * this.buildPreview.width / this.buildPreview.height,
+        definition.displayLength,
+      );
+    }
+  }
+
+  private setBuildMode(active: boolean): void {
+    this.buildModeActive = active && this.currentSpaceId === OVERWORLD_SPACE_ID;
+    this.buildPreview.setVisible(this.buildModeActive);
+    this.buildPreviewValid = false;
+    this.buildInvalidReason = "";
+    if (this.buildModeActive) {
+      clearBuildEvent();
+    }
+    updateBuildToolbar(this.buildModeActive, this.buildOrientation, false);
+  }
+
+  private updateBuildPreview(localPlayer: PlayerVisual): void {
+    if (!this.buildModeActive || this.currentSpaceId !== OVERWORLD_SPACE_ID) {
+      this.buildPreview.setVisible(false);
+      return;
+    }
+    const definition = BUILDABLES["wood-wall"];
+    const worldPoint = this.cameras.main.getWorldPoint(
+      this.input.activePointer.x,
+      this.input.activePointer.y,
+    );
+    const x = snapBuildCoordinate(worldPoint.x, definition.gridSize);
+    const y = snapBuildCoordinate(worldPoint.y, definition.gridSize);
+    const collider = buildableCollider(definition, x, y, this.buildOrientation);
+    const hasWood = (this.previousInventory?.wood ?? 0) >= (definition.cost.wood ?? 0);
+    const withinRange = distanceBetween(localPlayer.container, { x, y })
+      <= definition.maximumPlacementRange;
+    const overlapsBuilding = BUILDINGS.some((building) => (
+      rectanglesOverlap(collider, building.exterior.collider, 8)
+    ));
+    const overlapsStructure = [...this.structures.values()].some((structure) => {
+      if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
+        return false;
+      }
+      return buildableCollidersConflict(
+        collider,
+        buildableCollider(
+          BUILDABLES[structure.buildableId],
+          structure.x,
+          structure.y,
+          structure.orientation,
+        ),
+      );
+    });
+    const overlapsPlayer = [...this.playerVisuals.values()].some((visual) => (
+      visual.spaceId === OVERWORLD_SPACE_ID
+      && circleOverlapsRect(visual.container, PLAYER_COLLISION_RADIUS + 3, collider)
+    ));
+    const overlapsZombie = [...this.zombieVisuals.values()].some((visual) => (
+      visual.alive
+      && visual.spaceId === OVERWORLD_SPACE_ID
+      && circleOverlapsRect(visual.container, ZOMBIE_COLLISION_RADIUS + 3, collider)
+    ));
+    const overlapsResource = [...this.resources.values()].some((resource) => (
+      resource.available
+      && rectanglesOverlap(collider, resourceCollisionRect(resource.kind, resource.x, resource.y), 2)
+    ));
+    this.buildPreviewValid = hasWood
+      && withinRange
+      && !overlapsBuilding
+      && !overlapsStructure
+      && !overlapsPlayer
+      && !overlapsZombie
+      && !overlapsResource;
+    if (!hasWood) {
+      this.buildInvalidReason = `Need ${definition.cost.wood ?? 0} wood to place this wall.`;
+    } else if (!withinRange) {
+      this.buildInvalidReason = "Move closer to place this wall.";
+    } else if (
+      overlapsBuilding
+      || overlapsStructure
+      || overlapsPlayer
+      || overlapsZombie
+      || overlapsResource
+    ) {
+      this.buildInvalidReason = "That position is blocked.";
+    } else {
+      this.buildInvalidReason = "";
+    }
+    this.buildPreview
+      .setPosition(x, y)
+      .setDepth(y + 0.04)
+      .setVisible(true)
+      .setTint(this.buildPreviewValid ? 0x8fc693 : 0xd9877f);
+    this.updateBuildPreviewTexture();
+    updateBuildToolbar(this.buildModeActive, this.buildOrientation, this.buildPreviewValid);
+  }
+
+  private placeBuildPreview(): void {
+    if (!this.buildModeActive || !this.buildPreviewValid) {
+      if (this.buildModeActive) {
+        showBuildEvent({
+          kind: "error",
+          message: this.buildInvalidReason || "Cannot place a wall here.",
+          structureId: "",
+        });
+      }
+      return;
+    }
+    this.connection.placeStructure({
+      operationId: crypto.randomUUID(),
+      buildableId: "wood-wall",
+      x: this.buildPreview.x,
+      y: this.buildPreview.y,
+      orientation: this.buildOrientation,
+    });
+  }
+
   private fireAtPointer(pointer: Phaser.Input.Pointer): void {
     const localPlayer = this.playerVisuals.get(this.localSessionId);
     if (
@@ -357,7 +612,8 @@ export class GameScene extends Phaser.Scene {
       worldPoint.y - localPlayer.container.y,
       worldPoint.x - localPlayer.container.x,
     );
-    localPlayer.facingMarker.setRotation(angle);
+    localPlayer.facing = angle;
+    localPlayer.flashlightGlow.setRotation(angle);
     this.fireSequence += 1;
     this.connection.fire({ sequence: this.fireSequence, angle });
   }
@@ -368,10 +624,11 @@ export class GameScene extends Phaser.Scene {
     }
     const pointer = this.input.activePointer;
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    localPlayer.facingMarker.setRotation(Math.atan2(
+    localPlayer.facing = Math.atan2(
       worldPoint.y - localPlayer.container.y,
       worldPoint.x - localPlayer.container.x,
-    ));
+    );
+    localPlayer.flashlightGlow.setRotation(localPlayer.facing);
   }
 
   private handleCombatEvent(event: CombatEvent): void {
@@ -416,6 +673,13 @@ export class GameScene extends Phaser.Scene {
 
   private handleInventoryEvent(event: InventoryEvent): void {
     showInventoryEvent(event);
+    if (event.kind === "success") {
+      showLootNotification(event.message);
+    }
+  }
+
+  private handleBuildEvent(event: BuildEvent): void {
+    showBuildEvent(event);
     if (event.kind === "success") {
       showLootNotification(event.message);
     }
@@ -614,6 +878,7 @@ export class GameScene extends Phaser.Scene {
       down: acceptMovement && this.cursors.down.isDown,
       left: acceptMovement && this.cursors.left.isDown,
       right: acceptMovement && this.cursors.right.isDown,
+      sprint: acceptMovement && this.sprintKey.isDown && this.localStamina > 0,
     };
   }
 
@@ -622,7 +887,49 @@ export class GameScene extends Phaser.Scene {
     if (this.performanceAccumulator >= 500) {
       this.performanceAccumulator = 0;
       updateFrameRate(this.game.loop.actualFps);
+      this.updateMinimapPresentation();
     }
+  }
+
+  private updateMinimapPresentation(): void {
+    const localPlayer = this.playerVisuals.get(this.localSessionId);
+    if (!localPlayer) {
+      return;
+    }
+    const markers = [
+      ...[...this.playerVisuals.entries()]
+        .filter(([, visual]) => visual.spaceId === this.currentSpaceId)
+        .map(([id, visual]) => ({
+          x: visual.container.x,
+          y: visual.container.y,
+          kind: id === this.localSessionId ? "player" as const : "ally" as const,
+        })),
+      ...[...this.zombieVisuals.values()]
+        .filter((zombie) => zombie.alive && zombie.spaceId === this.currentSpaceId)
+        .map((zombie) => ({
+          x: zombie.container.x,
+          y: zombie.container.y,
+          kind: "zombie" as const,
+        })),
+      ...BUILDINGS.map((building) => ({
+        x: building.exterior.position.x,
+        y: building.exterior.position.y,
+        kind: "building" as const,
+      })),
+      ...[...this.structures.values()].map((structure) => ({
+        x: structure.x,
+        y: structure.y,
+        kind: "structure" as const,
+      })),
+      ...[...this.resources.values()]
+        .filter((resource) => resource.available)
+        .map((resource) => ({
+          x: resource.x,
+          y: resource.y,
+          kind: "resource" as const,
+        })),
+    ];
+    updateMinimap(localPlayer.container, markers);
   }
 
   private updateRemotePlayers(delta: number): void {
@@ -651,7 +958,11 @@ export class GameScene extends Phaser.Scene {
         visual.container.x - visual.lastVisualX,
         visual.container.y - visual.lastVisualY,
       ) > 0.08;
-      visual.sprite.setFlipX(Math.cos(visual.facingMarker.rotation) < 0);
+      visual.sprite.setFlipX(Math.cos(visual.facing) < 0);
+      visual.sprite.anims.timeScale = visual.sprinting ? 1.45 : 1;
+      visual.flashlightGlow
+        .setRotation(visual.facing)
+        .setVisible(visual.flashlight && visual.spaceId === this.currentSpaceId);
       if (this.time.now >= visual.animationLockedUntil) {
         const animation = moved ? PLAYER_TEXTURE_KEYS.walk : PLAYER_TEXTURE_KEYS.idle;
         if (visual.sprite.anims.currentAnim?.key !== animation) {
@@ -696,18 +1007,26 @@ export class GameScene extends Phaser.Scene {
       const activeContainer = [...this.containers.values()].find(
         (container) => container.searchingBy === playerId,
       );
-      const isSearching = Boolean(activeContainer && !activeContainer.opened);
+      const activeResource = [...this.resources.values()].find(
+        (resource) => resource.harvestingBy === playerId,
+      );
+      const isSearching = Boolean(
+        (activeContainer && !activeContainer.opened)
+        || (activeResource && activeResource.available),
+      );
       visual.searchBarBackground.setVisible(isSearching);
       visual.searchBarFill.setVisible(isSearching);
       visual.searchLabel.setVisible(isSearching);
 
-      if (!activeContainer) {
+      if (!activeContainer && !activeResource) {
         return;
       }
 
-      const progress = activeContainer.searchProgress;
+      const progress = activeContainer?.searchProgress ?? activeResource?.harvestProgress ?? 0;
       visual.searchBarFill.setScale(progress, 1);
-      visual.searchLabel.setText(`SEARCHING ${Math.round(progress * 100)}%`);
+      visual.searchLabel.setText(
+        `${activeResource ? "HARVESTING" : "SEARCHING"} ${Math.round(progress * 100)}%`,
+      );
     });
   }
 
@@ -728,6 +1047,7 @@ export class GameScene extends Phaser.Scene {
         Math.floor(localY / TILE_SIZE),
       );
       updateWorldReadout(this.worldId, tile.biome, this.playersInCurrentSpace());
+      updateSignalReadout(BIOMES[tile.biome].name, Math.hypot(localX, localY) / 10);
     } else {
       const building = buildingByInteriorSpace(this.currentSpaceId);
       updateAreaReadout(
@@ -735,6 +1055,7 @@ export class GameScene extends Phaser.Scene {
         building?.name ?? "Unknown interior",
         this.playersInCurrentSpace(),
       );
+      updateSignalReadout(building?.name ?? "Unknown interior", Math.hypot(localX, localY) / 10);
     }
 
     this.updateInteractionPrompt(localX, localY);
@@ -761,6 +1082,14 @@ export class GameScene extends Phaser.Scene {
     }
 
     const playerPosition = { x, y };
+    const localPlayer = this.playerVisuals.get(this.localSessionId);
+    const activeResource = localPlayer?.activeSearchId
+      ? this.resources.get(localPlayer.activeSearchId)
+      : undefined;
+    if (activeResource) {
+      showInteractionPrompt(`Cancel harvesting ${activeResource.kind}`);
+      return;
+    }
     const nearbyPickup = [...this.pickups.values()]
       .filter(
         (pickup) => pickup.spaceId === this.currentSpaceId
@@ -778,6 +1107,21 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.currentSpaceId === OVERWORLD_SPACE_ID) {
+      const nearbyResource = [...this.resources.values()]
+        .filter((resource) => resource.available
+          && distanceBetween(playerPosition, resource) <= RESOURCE_INTERACTION_RADIUS)
+        .sort(
+          (left, right) => distanceBetween(playerPosition, left)
+            - distanceBetween(playerPosition, right),
+        )[0];
+      if (nearbyResource) {
+        if (nearbyResource.harvestingBy) {
+          showInteractionPrompt(`Being harvested by ${nearbyResource.harvestingByName}`, false);
+        } else {
+          showInteractionPrompt(`Harvest ${nearbyResource.kind}`);
+        }
+        return;
+      }
       const nearbyBuilding = BUILDINGS
         .filter(
           (building) => distanceBetween(playerPosition, building.exterior.entrance)
@@ -801,7 +1145,6 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const localPlayer = this.playerVisuals.get(this.localSessionId);
     if (localPlayer?.activeSearchId) {
       const definition = buildingContainerById(localPlayer.activeSearchId);
       showInteractionPrompt(`Cancel searching ${definition?.name.toLowerCase() ?? "container"}`);
@@ -850,6 +1193,7 @@ export class GameScene extends Phaser.Scene {
       this.cameras.main.stopFollow();
       hideInteractionPrompt();
       closeInventory();
+      this.setBuildMode(false);
       return;
     }
 
@@ -879,6 +1223,32 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
+    this.structures.clear();
+    snapshot.structures.forEach((structure) => {
+      this.structures.set(structure.id, structure);
+      this.upsertStructure(structure);
+    });
+    const activeStructureIds = new Set(snapshot.structures.map((structure) => structure.id));
+    this.structureVisuals.forEach((visual, id) => {
+      if (!activeStructureIds.has(id)) {
+        visual.image.destroy();
+        this.structureVisuals.delete(id);
+      }
+    });
+
+    this.resources.clear();
+    snapshot.resources.forEach((resource) => {
+      this.resources.set(resource.id, resource);
+      this.upsertResource(resource);
+    });
+    const activeResourceIds = new Set(snapshot.resources.map((resource) => resource.id));
+    this.resourceVisuals.forEach((visual, id) => {
+      if (!activeResourceIds.has(id)) {
+        visual.image.destroy();
+        this.resourceVisuals.delete(id);
+      }
+    });
+
     const activeZombieIds = new Set(snapshot.zombies.map((zombie) => zombie.id));
     snapshot.zombies.forEach((zombie) => this.upsertZombie(zombie));
     this.zombieVisuals.forEach((visual, id) => {
@@ -898,6 +1268,8 @@ export class GameScene extends Phaser.Scene {
         aggroTarget: zombie.aggroTarget,
       })));
       gameElement.dataset.pickups = JSON.stringify(snapshot.pickups);
+      gameElement.dataset.structures = JSON.stringify(snapshot.structures);
+      gameElement.dataset.resources = JSON.stringify(snapshot.resources);
     }
 
     const current = snapshot.players.find((player) => player.id === snapshot.sessionId);
@@ -917,8 +1289,11 @@ export class GameScene extends Phaser.Scene {
 
     if (current) {
       this.localHealth = current.health;
+      this.localStamina = current.stamina;
       this.updateInventoryPresentation(current.inventory);
       updateHealth(current.health, current.maxHealth);
+      updateStamina(current.stamina, current.maxStamina, current.sprinting);
+      updateFlashlight(current.flashlight);
       this.reconcileLocalPlayer(current);
       if (localSpaceChanged) {
         this.transitionToSpace(current.spaceId);
@@ -939,7 +1314,11 @@ export class GameScene extends Phaser.Scene {
     if (existing) {
       existing.spaceId = player.spaceId;
       existing.activeSearchId = player.activeSearchId;
-      existing.facingMarker.setRotation(player.facing);
+      if (player.id !== this.localSessionId) {
+        existing.facing = player.facing;
+      }
+      existing.sprinting = player.sprinting;
+      existing.flashlight = player.flashlight;
       if (player.id !== this.localSessionId || existing.spaceId !== this.currentSpaceId) {
         existing.targetX = player.x;
         existing.targetY = player.y;
@@ -952,10 +1331,12 @@ export class GameScene extends Phaser.Scene {
       .sprite(0, -30, PLAYER_TEXTURE_KEYS.idle)
       .setScale(0.82)
       .play(PLAYER_TEXTURE_KEYS.idle);
-    const facing = this.add.triangle(0, 0, 0, -4, 12, 0, 0, 4, 0xece9d8)
-      .setPosition(28, -20)
-      .setScale(0.7)
-      .setRotation(player.facing);
+    const flashlightGlow = this.add.graphics().setPosition(0, -30).setVisible(player.flashlight);
+    flashlightGlow.fillStyle(0xfff2b0, 0.1);
+    flashlightGlow.fillTriangle(8, -5, 150, -34, 150, 34);
+    flashlightGlow.fillStyle(0xfff6c7, 0.16);
+    flashlightGlow.fillCircle(8, 0, 13);
+    flashlightGlow.setRotation(player.facing);
     const label = this.add
       .text(0, -72, player.name, {
         color: "#f2f0df",
@@ -984,9 +1365,9 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setVisible(false);
     const container = this.add.container(player.x, player.y, [
+      flashlightGlow,
       shadow,
       sprite,
-      facing,
       label,
       searchBarBackground,
       searchBarFill,
@@ -1004,7 +1385,10 @@ export class GameScene extends Phaser.Scene {
       searchBarBackground,
       searchBarFill,
       searchLabel,
-      facingMarker: facing,
+      facing: player.facing,
+      sprinting: player.sprinting,
+      flashlight: player.flashlight,
+      flashlightGlow,
       lastVisualX: player.x,
       lastVisualY: player.y,
       animationLockedUntil: 0,
@@ -1100,6 +1484,86 @@ export class GameScene extends Phaser.Scene {
     this.pickupVisuals.set(pickup.id, { container, spaceId: pickup.spaceId });
   }
 
+  private upsertStructure(structure: PlacedStructureSnapshot): void {
+    if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
+      return;
+    }
+    const existing = this.structureVisuals.get(structure.id);
+    const horizontal = structure.orientation === "horizontal";
+    const texture = horizontal
+      ? WOOD_WALL_HORIZONTAL_TEXTURE_KEY
+      : WOOD_WALL_VERTICAL_TEXTURE_KEY;
+    const definition = BUILDABLES[structure.buildableId];
+    if (existing) {
+      existing.image
+        .setPosition(structure.x, structure.y)
+        .setDepth(structure.y + 6)
+        .setVisible(this.currentSpaceId === OVERWORLD_SPACE_ID);
+      return;
+    }
+    const image = this.add.image(structure.x, structure.y, texture);
+    if (horizontal) {
+      image.setDisplaySize(definition.displayLength, definition.displayLength * image.height / image.width);
+    } else {
+      image.setDisplaySize(definition.displayLength * image.width / image.height, definition.displayLength);
+    }
+    image
+      .setDepth(structure.y + 6)
+      .setVisible(this.currentSpaceId === OVERWORLD_SPACE_ID);
+    this.structureVisuals.set(structure.id, { image });
+  }
+
+  private upsertResource(resource: ResourceNodeSnapshot): void {
+    const existing = this.resourceVisuals.get(resource.id);
+    if (existing) {
+      existing.image
+        .setPosition(resource.x, resource.y)
+        .setVisible(resource.available && this.currentSpaceId === OVERWORLD_SPACE_ID)
+        .setAlpha(resource.harvestingBy ? 0.72 : 1);
+      return;
+    }
+    const texture = `resource:${resource.kind}:${resource.variant}`;
+    const image = this.add.image(resource.x, resource.y, texture);
+    if (resource.kind === "tree") {
+      const widths = [92, 82, 66];
+      const width = widths[resource.variant] ?? 76;
+      image.setOrigin(0.5, 0.9).setDisplaySize(width, width * image.height / image.width);
+    } else {
+      const widths = [34, 34, 42];
+      const width = widths[resource.variant] ?? 34;
+      image.setOrigin(0.5, 0.76).setDisplaySize(width, width * image.height / image.width);
+    }
+    image
+      .setDepth(resource.y + 0.02)
+      .setVisible(resource.available && this.currentSpaceId === OVERWORLD_SPACE_ID);
+    this.resourceVisuals.set(resource.id, { image });
+  }
+
+  private movementEnvironment(spaceId: string) {
+    const base = movementEnvironmentForSpace(spaceId);
+    if (spaceId !== OVERWORLD_SPACE_ID) {
+      return base;
+    }
+    const colliders = [...base.colliders];
+    this.structures.forEach((structure) => {
+      if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
+        return;
+      }
+      colliders.push(buildableCollider(
+        BUILDABLES[structure.buildableId],
+        structure.x,
+        structure.y,
+        structure.orientation,
+      ));
+    });
+    this.resources.forEach((resource) => {
+      if (resource.available) {
+        colliders.push(resourceCollisionRect(resource.kind, resource.x, resource.y));
+      }
+    });
+    return { ...base, colliders };
+  }
+
   private predictLocalInput(input: MovementInput): void {
     const visual = this.playerVisuals.get(this.localSessionId);
     if (!visual) {
@@ -1111,8 +1575,12 @@ export class GameScene extends Phaser.Scene {
       input,
       INPUT_STEP_SECONDS,
       PLAYER_COLLISION_RADIUS,
-      movementEnvironmentForSpace(visual.spaceId),
+      this.movementEnvironment(visual.spaceId),
+      input.sprint && this.localStamina > 0 ? SPRINT_MOVE_SPEED : DEFAULT_MOVE_SPEED,
     );
+    visual.sprinting = input.sprint
+      && (input.up || input.down || input.left || input.right)
+      && this.localStamina > 0;
     visual.container.setPosition(predicted.x, predicted.y);
     visual.targetX = predicted.x;
     visual.targetY = predicted.y;
@@ -1136,7 +1604,8 @@ export class GameScene extends Phaser.Scene {
         input,
         INPUT_STEP_SECONDS,
         PLAYER_COLLISION_RADIUS,
-        movementEnvironmentForSpace(authoritative.spaceId),
+        this.movementEnvironment(authoritative.spaceId),
+        input.sprint && authoritative.stamina > 0 ? SPRINT_MOVE_SPEED : DEFAULT_MOVE_SPEED,
       );
     });
 
@@ -1145,6 +1614,8 @@ export class GameScene extends Phaser.Scene {
     visual.targetY = reconciled.y;
     visual.spaceId = authoritative.spaceId;
     visual.activeSearchId = authoritative.activeSearchId;
+    visual.sprinting = authoritative.sprinting;
+    visual.flashlight = authoritative.flashlight;
   }
 
   private transitionToSpace(spaceId: string): void {
@@ -1173,6 +1644,10 @@ export class GameScene extends Phaser.Scene {
     this.safeZoneVisual.setVisible(showExterior);
     this.terrainChunks.forEach((image) => image.setVisible(showExterior));
     this.ambientProps.forEach((image) => image.setVisible(showExterior));
+    this.structureVisuals.forEach((visual) => visual.image.setVisible(showExterior));
+    if (!showExterior) {
+      this.setBuildMode(false);
+    }
     this.interiorObjectsBySpace.forEach((objects, spaceId) => {
       objects.forEach((object) => object.setVisible(spaceId === this.currentSpaceId));
     });
@@ -1189,6 +1664,11 @@ export class GameScene extends Phaser.Scene {
     });
     this.pickupVisuals.forEach((visual) => {
       visual.container.setVisible(visual.spaceId === this.currentSpaceId);
+    });
+    this.resourceVisuals.forEach((visual, id) => {
+      visual.image.setVisible(
+        this.currentSpaceId === OVERWORLD_SPACE_ID && this.resources.get(id)?.available === true,
+      );
     });
   }
 

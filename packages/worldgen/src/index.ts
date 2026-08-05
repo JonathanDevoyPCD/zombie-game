@@ -40,6 +40,29 @@ export interface GeneratedAmbientProp {
   flipX: boolean;
 }
 
+export type GeneratedResourceKind = "tree" | "stone";
+
+export interface GeneratedResourceNode {
+  id: string;
+  kind: GeneratedResourceKind;
+  variant: number;
+  x: number;
+  y: number;
+}
+
+export const RESOURCE_INTERACTION_RADIUS = 54;
+export const RESOURCE_RESPAWN_MS = 3 * 60 * 1000;
+
+export function resourceCollisionRect(
+  kind: GeneratedResourceKind,
+  x: number,
+  y: number,
+): { x: number; y: number; width: number; height: number } {
+  const width = kind === "tree" ? 36 : 28;
+  const height = kind === "tree" ? 26 : 22;
+  return { x: x - width / 2, y: y - height / 2, width, height };
+}
+
 function hashString(value: string): number {
   let hash = 2166136261;
 
@@ -248,4 +271,62 @@ export function generateChunkProps(
   }
 
   return props;
+}
+
+export function generateChunkResources(
+  seed: string,
+  chunkX: number,
+  chunkY: number,
+): GeneratedResourceNode[] {
+  const numericSeed = hashString(seed);
+  const cellSize = 256;
+  const cellsPerChunk = CHUNK_SIZE / cellSize;
+  const resources: GeneratedResourceNode[] = [];
+
+  for (let localCellY = 0; localCellY < cellsPerChunk; localCellY += 1) {
+    for (let localCellX = 0; localCellX < cellsPerChunk; localCellX += 1) {
+      const globalCellX = chunkX * cellsPerChunk + localCellX;
+      const globalCellY = chunkY * cellsPerChunk + localCellY;
+      const centerX = chunkX * CHUNK_SIZE + localCellX * cellSize + cellSize / 2;
+      const centerY = chunkY * CHUNK_SIZE + localCellY * cellSize + cellSize / 2;
+      const x = centerX + (randomAt(numericSeed, globalCellX, globalCellY, 811) - 0.5) * 132;
+      const y = centerY + (randomAt(numericSeed, globalCellX, globalCellY, 821) - 0.5) * 132;
+      if (Math.hypot(x, y) < 230) {
+        continue;
+      }
+      const tile = sampleTile(seed, Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));
+      const treeChance = {
+        grassland: 0.38,
+        forest: 0.72,
+        desert: 0.04,
+        tundra: 0.1,
+        badlands: 0.03,
+        wasteland: 0.07,
+      }[tile.biome];
+      const stoneChance = {
+        grassland: 0.18,
+        forest: 0.12,
+        desert: 0.32,
+        tundra: 0.28,
+        badlands: 0.4,
+        wasteland: 0.34,
+      }[tile.biome];
+      const roll = randomAt(numericSeed, globalCellX, globalCellY, 827);
+      const kind: GeneratedResourceKind | null = roll < treeChance
+        ? "tree"
+        : roll < treeChance + stoneChance ? "stone" : null;
+      if (!kind) {
+        continue;
+      }
+      resources.push({
+        id: `${chunkId(chunkX, chunkY)}:resource:${localCellX}:${localCellY}`,
+        kind,
+        variant: hash2D(numericSeed, globalCellX, globalCellY, 839) % 3,
+        x,
+        y,
+      });
+    }
+  }
+
+  return resources;
 }

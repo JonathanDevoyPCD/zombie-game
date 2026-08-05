@@ -109,6 +109,40 @@ export function addInventoryBundle(
   return true;
 }
 
+export function removeInventoryBundle(
+  slots: InventorySlotLike[],
+  bundle: InventoryBundle,
+): boolean {
+  const totals = inventoryTotals(slots);
+  const requirements = Object.entries(bundle);
+  if (requirements.some(([itemId, quantity]) => (
+    !isItemId(itemId)
+    || totals[itemId] < Math.max(0, Math.floor(quantity ?? 0))
+  ))) {
+    return false;
+  }
+
+  requirements.forEach(([itemId, quantity]) => {
+    if (!isItemId(itemId)) {
+      return;
+    }
+    let remaining = Math.max(0, Math.floor(quantity ?? 0));
+    slots.forEach((slot) => {
+      if (remaining <= 0 || slot.itemId !== itemId) {
+        return;
+      }
+      const removed = Math.min(remaining, slot.quantity);
+      slot.quantity -= removed;
+      remaining -= removed;
+      if (slot.quantity <= 0) {
+        slot.itemId = "";
+        slot.quantity = 0;
+      }
+    });
+  });
+  return true;
+}
+
 export function moveInventoryStack(
   slots: InventorySlotLike[],
   fromIndex: number,
@@ -188,4 +222,3 @@ export function removeInventoryItemAt(
   }
   return { itemId, quantity };
 }
-

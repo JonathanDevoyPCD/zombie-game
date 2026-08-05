@@ -26,22 +26,54 @@
           <span id="frame-rate">-- FPS</span>
         </div>
       </section>
-      <section class="inventory-readout" aria-label="Carried supplies">
-        <strong>FIELD PACK</strong>
-        <div class="health-readout">
-          <span>Health</span>
-          <div class="health-track"><i id="health-fill"></i></div>
-          <b id="health-value">100 / 100</b>
-        </div>
-        <div class="inventory-grid">
-          <span><b id="inventory-scrap">0</b> Scrap</span>
-          <span><b id="inventory-parts">0</b> Parts</span>
-          <span><b id="inventory-food">0</b> Food</span>
-          <span><b id="inventory-medicine">0</b> Medicine</span>
-          <span><b id="inventory-wood">0</b> Wood</span>
-          <span><b id="inventory-stone">0</b> Stone</span>
-        </div>
-      </section>
+      <aside class="survival-hud" aria-label="Survivor status">
+        <section class="survival-panel signal-panel">
+          <strong>Signal Readout</strong>
+          <div>
+            <span id="signal-time">Time: Day</span>
+            <span id="signal-district">District: Grasslands</span>
+            <span id="signal-distance">Camp: 0m</span>
+          </div>
+        </section>
+        <section class="survival-panel vitals-panel">
+          <strong>Vitals</strong>
+          <div class="vital-row health-vital">
+            <div><i id="health-fill"></i></div>
+            <b id="health-value">100 / 100</b>
+          </div>
+          <div class="vital-row stamina-vital">
+            <div><i id="stamina-fill"></i></div>
+            <b id="stamina-value">100 / 100</b>
+          </div>
+          <div class="vital-row armor-vital">
+            <div><i></i></div>
+            <b>0 / 0</b>
+          </div>
+        </section>
+        <section class="survival-panel weapon-panel">
+          <strong>Weapon</strong>
+          <span>Pistol</span>
+          <span>Ready &middot; unlimited ammo</span>
+        </section>
+        <section class="survival-panel resources-panel">
+          <strong>Resources</strong>
+          <div class="resource-grid">
+            <span><img id="resource-scrap-icon" alt="" /><b id="inventory-scrap">0</b><small>scrap</small></span>
+            <span><img id="resource-wood-icon" alt="" /><b id="inventory-wood">0</b><small>wood</small></span>
+            <span><img id="resource-stone-icon" alt="" /><b id="inventory-stone">0</b><small>stone</small></span>
+            <span><img id="resource-parts-icon" alt="" /><b id="inventory-parts">0</b><small>parts</small></span>
+            <span><img id="resource-food-icon" alt="" /><b id="inventory-food">0</b><small>food</small></span>
+            <span><img id="resource-medicine-icon" alt="" /><b id="inventory-medicine">0</b><small>med</small></span>
+          </div>
+        </section>
+        <section class="survival-panel equipment-panel">
+          <strong>Equipment</strong>
+          <span>Flashlight <b id="flashlight-status">OFF</b></span>
+        </section>
+        <section class="survival-panel minimap-panel" aria-label="Local minimap">
+          <canvas id="minimap" width="144" height="144"></canvas>
+        </section>
+      </aside>
       <section id="inventory-menu" class="inventory-menu" aria-label="Field pack inventory" hidden>
         <header>
           <div>
@@ -49,7 +81,7 @@
             <strong>Inventory</strong>
           </div>
           <span id="inventory-capacity">0 / 16</span>
-          <button id="inventory-close" type="button" aria-label="Close inventory">×</button>
+          <button id="inventory-close" type="button" aria-label="Close inventory">X</button>
         </header>
         <div id="inventory-slot-grid" class="inventory-slot-grid"></div>
         <footer>
@@ -61,6 +93,15 @@
         </footer>
         <p id="inventory-status" aria-live="polite"></p>
       </section>
+      <section id="build-toolbar" class="build-toolbar" aria-label="Build mode" hidden>
+        <img id="build-icon" alt="" />
+        <div>
+          <strong>WOODEN WALL</strong>
+          <span><b>2</b> WOOD</span>
+        </div>
+        <span id="build-orientation">HORIZONTAL</span>
+        <p id="build-status" aria-live="polite"></p>
+      </section>
       <div id="interaction-prompt" class="interaction-prompt" hidden>
         <kbd>E</kbd>
         <span id="interaction-text"></span>
@@ -70,7 +111,7 @@
         <strong id="loot-toast-text"></strong>
       </div>
       <div id="combat-toast" class="combat-toast" hidden></div>
-      <div class="controls">WASD TO MOVE &nbsp; MOUSE TO AIM &nbsp; LEFT CLICK TO FIRE</div>
+      <div class="controls">WASD MOVE &nbsp; SHIFT SPRINT &nbsp; F LIGHT &nbsp; I PACK &nbsp; B BUILD</div>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

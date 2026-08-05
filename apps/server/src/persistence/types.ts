@@ -1,4 +1,4 @@
-export const PERSISTENCE_SCHEMA_VERSION = 4;
+export const PERSISTENCE_SCHEMA_VERSION = 8;
 
 export interface PersistedInventorySlot {
   index: number;
@@ -18,6 +18,9 @@ export interface PersistedSurvivor {
   facing: number;
   spaceId: string;
   health: number;
+  stamina: number;
+  flashlight: boolean;
+  starterKitGranted: boolean;
   inventory: PersistedInventory;
   updatedAt: string;
 }
@@ -48,6 +51,21 @@ export interface PersistedWorldPickup {
   droppedBy: string;
 }
 
+export interface PersistedPlacedStructure {
+  id: string;
+  buildableId: string;
+  x: number;
+  y: number;
+  orientation: "horizontal" | "vertical";
+  placedBy: string;
+}
+
+export interface PersistedResourceNode {
+  id: string;
+  available: boolean;
+  respawnAt: number;
+}
+
 export interface PersistedWorld {
   worldId: string;
   seed: string;
@@ -55,6 +73,8 @@ export interface PersistedWorld {
   containers: Record<string, PersistedContainer>;
   zombies: Record<string, PersistedZombie>;
   pickups: Record<string, PersistedWorldPickup>;
+  structures: Record<string, PersistedPlacedStructure>;
+  resources: Record<string, PersistedResourceNode>;
   updatedAt: string;
 }
 

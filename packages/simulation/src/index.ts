@@ -22,6 +22,7 @@ export interface RayHitCircle extends Position {
 }
 
 export const DEFAULT_MOVE_SPEED = 190;
+export const SPRINT_MOVE_SPEED = 285;
 
 export function calculateSearchProgress(
   now: number,
@@ -220,5 +221,6 @@ export function sanitizeMovementInput(value: unknown): MovementInput | null {
     down: candidate.down === true,
     left: candidate.left === true,
     right: candidate.right === true,
+    sprint: candidate.sprint === true,
   };
 }

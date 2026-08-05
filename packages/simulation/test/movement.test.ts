@@ -26,6 +26,7 @@ describe("movement simulation", () => {
       down: false,
       left: false,
       right: true,
+      sprint: false,
     });
 
     expect(Math.hypot(movement.x, movement.y)).toBeCloseTo(1);
@@ -34,7 +35,7 @@ describe("movement simulation", () => {
   it("integrates movement without diagonal speed gain", () => {
     const position = integrateMovement(
       { x: 0, y: 0 },
-      { sequence: 1, up: false, down: true, left: false, right: true },
+      { sequence: 1, up: false, down: true, left: false, right: true, sprint: false },
       1 / 30,
       180,
     );
@@ -50,7 +51,7 @@ describe("movement simulation", () => {
   it("blocks movement through solid rectangles", () => {
     const position = integrateMovementWithCollisions(
       { x: 0, y: 0 },
-      { sequence: 1, up: false, down: false, left: false, right: true },
+      { sequence: 1, up: false, down: false, left: false, right: true, sprint: false },
       1,
       10,
       { colliders: [{ x: 15, y: -20, width: 40, height: 40 }] },
@@ -62,7 +63,7 @@ describe("movement simulation", () => {
   it("clamps movement to interior bounds", () => {
     const position = integrateMovementWithCollisions(
       { x: 85, y: 0 },
-      { sequence: 1, up: false, down: false, left: false, right: true },
+      { sequence: 1, up: false, down: false, left: false, right: true, sprint: false },
       1,
       10,
       { bounds: { x: -100, y: -100, width: 200, height: 200 }, colliders: [] },

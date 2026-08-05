@@ -10,11 +10,14 @@ export const ClientMessage = {
   FIRE: "fire",
   INVENTORY_MOVE: "inventory-move",
   INVENTORY_DROP: "inventory-drop",
+  BUILD_PLACE: "build-place",
+  FLASHLIGHT_TOGGLE: "flashlight-toggle",
 } as const;
 
 export const ServerMessage = {
   COMBAT_EVENT: "combat-event",
   INVENTORY_EVENT: "inventory-event",
+  BUILD_EVENT: "build-event",
 } as const;
 
 export interface MovementInput {
@@ -23,6 +26,7 @@ export interface MovementInput {
   down: boolean;
   left: boolean;
   right: boolean;
+  sprint: boolean;
 }
 
 export interface FireWeaponInput {
@@ -43,6 +47,14 @@ export interface InventoryDropInput {
   quantity?: number;
 }
 
+export interface BuildPlaceInput {
+  operationId: string;
+  buildableId: string;
+  x: number;
+  y: number;
+  orientation: "horizontal" | "vertical";
+}
+
 export interface JoinWorldOptions {
   worldId: string;
   survivorId: string;
@@ -60,6 +72,10 @@ export interface PlayerSnapshot {
   activeSearchId: string;
   health: number;
   maxHealth: number;
+  stamina: number;
+  maxStamina: number;
+  sprinting: boolean;
+  flashlight: boolean;
   inventory: InventorySnapshot;
   lastProcessedInput: number;
 }
@@ -113,6 +129,21 @@ export interface InventoryEvent {
   message: string;
 }
 
+export interface BuildEvent {
+  kind: "success" | "error";
+  message: string;
+  structureId: string;
+}
+
+export interface PlacedStructureSnapshot {
+  id: string;
+  buildableId: string;
+  x: number;
+  y: number;
+  orientation: "horizontal" | "vertical";
+  placedBy: string;
+}
+
 export interface WorldPickupSnapshot {
   id: string;
   itemId: string;
@@ -121,6 +152,19 @@ export interface WorldPickupSnapshot {
   y: number;
   spaceId: string;
   droppedBy: string;
+}
+
+export interface ResourceNodeSnapshot {
+  id: string;
+  kind: "tree" | "stone";
+  variant: number;
+  x: number;
+  y: number;
+  available: boolean;
+  respawnAt: number;
+  harvestingBy: string;
+  harvestingByName: string;
+  harvestProgress: number;
 }
 
 export interface ContainerSnapshot {

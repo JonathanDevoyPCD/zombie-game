@@ -4,6 +4,8 @@ import {
   NETWORK_PATCH_MS,
   ServerMessage,
   SIMULATION_HZ,
+  type BuildEvent,
+  type BuildPlaceInput,
   type CombatEvent,
   type FireWeaponInput,
   type InventoryDropInput,
@@ -14,15 +16,21 @@ import {
 } from "@last-survivor/shared";
 import {
   ALL_BUILDING_CONTAINERS,
+  BUILDABLES,
   BUILDINGS,
   INVENTORY_SLOT_COUNT,
   ITEMS,
   OVERWORLD_SPACE_ID,
   PLAYER_COLLISION_RADIUS,
+  buildableCollider,
+  buildableCollidersConflict,
   buildingByInteriorSpace,
   buildingContainerById,
-  movementEnvironmentForSpace,
+  isBuildableId,
+  isBuildOrientation,
   isItemId,
+  movementEnvironmentForSpace,
+  snapBuildCoordinate,
   type ItemId,
   type LootItemId,
   type SearchableContainerDefinition,
@@ -47,12 +55,21 @@ import {
 } from "@last-survivor/content";
 import {
   calculateSearchProgress,
+  DEFAULT_MOVE_SPEED,
   integrateMovementWithCollisions,
   integrateVectorWithCollisions,
   rayCircleHitDistance,
   rayRectHitDistance,
   sanitizeMovementInput,
+  SPRINT_MOVE_SPEED,
 } from "@last-survivor/simulation";
+import {
+  RESOURCE_INTERACTION_RADIUS,
+  RESOURCE_RESPAWN_MS,
+  generateChunkResources,
+  resourceCollisionRect,
+  worldToChunk,
+} from "@last-survivor/worldgen";
 import { type Client, Room, ServerError } from "@colyseus/core";
 import { worldRepository } from "../persistence/defaultRepository.js";
 import type {
@@ -68,6 +85,7 @@ import {
   emptyInventorySlots,
   inventoryTotals,
   moveInventoryStack,
+  removeInventoryBundle,
   removeInventoryItemAt,
   type InventoryBundle,
   type InventorySlotLike,
@@ -78,6 +96,8 @@ import { PlayerState } from "./schema/PlayerState.js";
 import { WorldState } from "./schema/WorldState.js";
 import { ZombieState } from "./schema/ZombieState.js";
 import { WorldPickupState } from "./schema/WorldPickupState.js";
+import { PlacedStructureState } from "./schema/PlacedStructureState.js";
+import { ResourceNodeState } from "./schema/ResourceNodeState.js";
 
 function cleanIdentifier(value: unknown, fallback: string): string {
   if (typeof value !== "string") {
@@ -175,7 +195,64 @@ function sanitizeInventoryDropInput(value: unknown): InventoryDropInput | null {
   return input;
 }
 
+function sanitizeBuildPlaceInput(value: unknown): BuildPlaceInput | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<BuildPlaceInput>;
+  const operationId = cleanOperationId(candidate.operationId);
+  if (
+    !operationId
+    || typeof candidate.buildableId !== "string"
+    || !isBuildableId(candidate.buildableId)
+    || typeof candidate.orientation !== "string"
+    || !isBuildOrientation(candidate.orientation)
+    || typeof candidate.x !== "number"
+    || !Number.isFinite(candidate.x)
+    || typeof candidate.y !== "number"
+    || !Number.isFinite(candidate.y)
+    || Math.abs(candidate.x) > 1_000_000
+    || Math.abs(candidate.y) > 1_000_000
+  ) {
+    return null;
+  }
+  return {
+    operationId,
+    buildableId: candidate.buildableId,
+    x: candidate.x,
+    y: candidate.y,
+    orientation: candidate.orientation,
+  };
+}
+
+function rectanglesOverlap(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+  padding = 0,
+): boolean {
+  return left.x < right.x + right.width + padding
+    && left.x + left.width + padding > right.x
+    && left.y < right.y + right.height + padding
+    && left.y + left.height + padding > right.y;
+}
+
+function circleOverlapsRect(
+  circle: { x: number; y: number },
+  radius: number,
+  rect: { x: number; y: number; width: number; height: number },
+): boolean {
+  const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+  const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+  return (circle.x - closestX) ** 2 + (circle.y - closestY) ** 2 < radius ** 2;
+}
+
 const CHECKPOINT_INTERVAL_MS = 5000;
+const PLAYER_MAX_STAMINA = 100;
+const SPRINT_STAMINA_DRAIN_PER_SECOND = 24;
+const STAMINA_RECOVERY_PER_SECOND = 18;
+const RESOURCE_CHUNK_RADIUS = 1;
+const TREE_HARVEST_DURATION_MS = 2400;
+const STONE_HARVEST_DURATION_MS = 3000;
 
 export class WorldRoom extends Room<{ state: WorldState }> {
   state = new WorldState();
@@ -187,8 +264,11 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   private readonly lastZombieAttackAt = new Map<string, number>();
   private readonly playerInvulnerableUntil = new Map<string, number>();
   private readonly damageLedgers = new Map<string, Map<string, { damage: number; name: string }>>();
-  private readonly processedInventoryOperations = new Map<string, Set<string>>();
+  private readonly processedOperations = new Map<string, Set<string>>();
   private readonly persistedSurvivors = new Map<string, PersistedSurvivor>();
+  private readonly persistedResources = new Map<string, PersistedWorld["resources"][string]>();
+  private readonly loadedResourceChunks = new Set<string>();
+  private readonly starterKitsGranted = new Set<string>();
   private persistenceDirty = false;
   private persistenceQueue: Promise<void> = Promise.resolve();
 
@@ -203,6 +283,12 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       this.state.seed = persistedWorld.seed;
       Object.values(persistedWorld.survivors).forEach((survivor) => {
         this.persistedSurvivors.set(survivor.survivorId, survivor);
+        if (survivor.starterKitGranted) {
+          this.starterKitsGranted.add(survivor.survivorId);
+        }
+      });
+      Object.values(persistedWorld.resources ?? {}).forEach((resource) => {
+        this.persistedResources.set(resource.id, resource);
       });
     }
 
@@ -258,6 +344,25 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       this.state.pickups.set(pickup.id, pickup);
     });
 
+    Object.values(persistedWorld?.structures ?? {}).forEach((persistedStructure) => {
+      if (
+        !isBuildableId(persistedStructure.buildableId)
+        || !isBuildOrientation(persistedStructure.orientation)
+      ) {
+        return;
+      }
+      const structure = new PlacedStructureState();
+      structure.id = persistedStructure.id;
+      structure.buildableId = persistedStructure.buildableId;
+      structure.x = finiteNumber(persistedStructure.x, 0);
+      structure.y = finiteNumber(persistedStructure.y, 0);
+      structure.orientation = persistedStructure.orientation;
+      structure.placedBy = persistedStructure.placedBy;
+      this.state.structures.set(structure.id, structure);
+    });
+
+    this.ensureResourcesAround(0, 0);
+
     this.onMessage(ClientMessage.INPUT, (client, payload: unknown) => {
       const nextInput = sanitizeMovementInput(payload);
       const player = this.state.players.get(client.sessionId);
@@ -280,6 +385,17 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     });
     this.onMessage(ClientMessage.INVENTORY_DROP, (client, payload: unknown) => {
       this.handleInventoryDrop(client, payload);
+    });
+    this.onMessage(ClientMessage.BUILD_PLACE, (client, payload: unknown) => {
+      this.handleBuildPlace(client, payload);
+    });
+    this.onMessage(ClientMessage.FLASHLIGHT_TOGGLE, (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.health <= 0) {
+        return;
+      }
+      player.flashlight = !player.flashlight;
+      this.markPersistenceDirty();
     });
 
     this.setSimulationInterval((deltaTime) => this.simulate(deltaTime), 1000 / SIMULATION_HZ);
@@ -307,19 +423,30 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     player.survivorId = survivorId;
     if (persisted) {
       this.restoreSurvivor(player, persisted);
+      if (!persisted.starterKitGranted) {
+        const slots = this.playerInventory(player);
+        addInventoryItem(slots, "wood", 12);
+        this.commitPlayerInventory(player, slots);
+        this.starterKitsGranted.add(survivorId);
+      }
     } else {
       player.name = cleanIdentifier(options.playerName, `Survivor ${joinIndex + 1}`);
       player.x = Math.cos(angle) * 48;
       player.y = Math.sin(angle) * 48;
       player.spaceId = OVERWORLD_SPACE_ID;
       this.initializePlayerInventory(player);
+      const startingSlots = this.playerInventory(player);
+      addInventoryItem(startingSlots, "wood", 12);
+      this.commitPlayerInventory(player, startingSlots);
+      this.starterKitsGranted.add(survivorId);
     }
 
     this.state.players.set(client.sessionId, player);
+    this.ensureResourcesAround(player.x, player.y);
     this.inputQueues.set(client.sessionId, []);
     this.simulationBudgets.set(client.sessionId, 0);
     this.playerInvulnerableUntil.set(client.sessionId, Date.now() + 1000);
-    this.processedInventoryOperations.set(client.sessionId, new Set());
+    this.processedOperations.set(client.sessionId, new Set());
     this.captureSurvivor(player);
     this.markPersistenceDirty();
   }
@@ -337,7 +464,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     this.lastFireAt.delete(client.sessionId);
     this.lastFireSequence.delete(client.sessionId);
     this.playerInvulnerableUntil.delete(client.sessionId);
-    this.processedInventoryOperations.delete(client.sessionId);
+    this.processedOperations.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     await this.flushPersistence(true);
   }
@@ -352,6 +479,9 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     const elapsedMs = Math.min(Math.max(deltaTimeMs, 0), maximumBudgetMs);
 
     this.state.players.forEach((player, sessionId) => {
+      if (player.spaceId === OVERWORLD_SPACE_ID) {
+        this.ensureResourcesAround(player.x, player.y);
+      }
       const queue = this.inputQueues.get(sessionId);
       let budgetMs = Math.min(
         (this.simulationBudgets.get(sessionId) ?? 0) + elapsedMs,
@@ -364,6 +494,21 @@ export class WorldRoom extends Room<{ state: WorldState }> {
           break;
         }
 
+        const moving = input.up || input.down || input.left || input.right;
+        const canSprint = moving && input.sprint && player.stamina > 0;
+        player.sprinting = canSprint;
+        if (canSprint) {
+          player.stamina = Math.max(
+            0,
+            player.stamina - SPRINT_STAMINA_DRAIN_PER_SECOND / SIMULATION_HZ,
+          );
+        } else {
+          player.stamina = Math.min(
+            player.maxStamina,
+            player.stamina + STAMINA_RECOVERY_PER_SECOND / SIMULATION_HZ,
+          );
+        }
+
         const nextPosition = player.activeSearchId
           ? { x: player.x, y: player.y }
           : integrateMovementWithCollisions(
@@ -371,7 +516,8 @@ export class WorldRoom extends Room<{ state: WorldState }> {
               input,
               1 / SIMULATION_HZ,
               PLAYER_COLLISION_RADIUS,
-              movementEnvironmentForSpace(player.spaceId),
+              this.movementEnvironment(player.spaceId),
+              canSprint ? SPRINT_MOVE_SPEED : DEFAULT_MOVE_SPEED,
             );
         const movementX = nextPosition.x - player.x;
         const movementY = nextPosition.y - player.y;
@@ -391,6 +537,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     });
 
     this.updateSearches(Date.now());
+    this.updateResources(Date.now());
     this.updateZombies(elapsedMs / 1000, Date.now());
 
     this.state.tick += 1;
@@ -452,8 +599,33 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     player.stone = totals.stone;
   }
 
-  private acceptInventoryOperation(sessionId: string, operationId: string): boolean {
-    const operations = this.processedInventoryOperations.get(sessionId);
+  private movementEnvironment(spaceId: string) {
+    const base = movementEnvironmentForSpace(spaceId);
+    if (spaceId !== OVERWORLD_SPACE_ID) {
+      return base;
+    }
+    const colliders = [...base.colliders];
+    this.state.structures.forEach((structure) => {
+      if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
+        return;
+      }
+      colliders.push(buildableCollider(
+        BUILDABLES[structure.buildableId],
+        structure.x,
+        structure.y,
+        structure.orientation,
+      ));
+    });
+    this.state.resources.forEach((resource) => {
+      if (resource.available && (resource.kind === "tree" || resource.kind === "stone")) {
+        colliders.push(resourceCollisionRect(resource.kind, resource.x, resource.y));
+      }
+    });
+    return { ...base, colliders };
+  }
+
+  private acceptOperation(sessionId: string, operationId: string): boolean {
+    const operations = this.processedOperations.get(sessionId);
     if (!operations || operations.has(operationId)) {
       return false;
     }
@@ -471,10 +643,14 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     client.send(ServerMessage.INVENTORY_EVENT, event);
   }
 
+  private sendBuildEvent(client: Client, event: BuildEvent): void {
+    client.send(ServerMessage.BUILD_EVENT, event);
+  }
+
   private handleInventoryMove(client: Client, payload: unknown): void {
     const input = sanitizeInventoryMoveInput(payload);
     const player = this.state.players.get(client.sessionId);
-    if (!input || !player || !this.acceptInventoryOperation(client.sessionId, input.operationId)) {
+    if (!input || !player || !this.acceptOperation(client.sessionId, input.operationId)) {
       return;
     }
     const slots = this.playerInventory(player);
@@ -489,7 +665,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   private handleInventoryDrop(client: Client, payload: unknown): void {
     const input = sanitizeInventoryDropInput(payload);
     const player = this.state.players.get(client.sessionId);
-    if (!input || !player || !this.acceptInventoryOperation(client.sessionId, input.operationId)) {
+    if (!input || !player || !this.acceptOperation(client.sessionId, input.operationId)) {
       return;
     }
     const slots = this.playerInventory(player);
@@ -512,6 +688,128 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     this.sendInventoryEvent(client, {
       kind: "success",
       message: `Dropped ${removed.quantity} ${ITEMS[removed.itemId].name.toLowerCase()}.`,
+    });
+    this.markPersistenceDirty();
+  }
+
+  private handleBuildPlace(client: Client, payload: unknown): void {
+    const input = sanitizeBuildPlaceInput(payload);
+    const player = this.state.players.get(client.sessionId);
+    if (
+      !input
+      || !isBuildableId(input.buildableId)
+      || !player
+      || !this.acceptOperation(client.sessionId, input.operationId)
+    ) {
+      return;
+    }
+    if (player.spaceId !== OVERWORLD_SPACE_ID || player.activeSearchId || player.health <= 0) {
+      this.sendBuildEvent(client, {
+        kind: "error",
+        message: "Structures can only be placed while standing in the overworld.",
+        structureId: "",
+      });
+      return;
+    }
+
+    const definition = BUILDABLES[input.buildableId];
+    const x = snapBuildCoordinate(input.x, definition.gridSize);
+    const y = snapBuildCoordinate(input.y, definition.gridSize);
+    if (distanceBetween(player, { x, y }) > definition.maximumPlacementRange) {
+      this.sendBuildEvent(client, {
+        kind: "error",
+        message: "That position is out of building range.",
+        structureId: "",
+      });
+      return;
+    }
+
+    const collider = buildableCollider(definition, x, y, input.orientation);
+    const staticEnvironment = movementEnvironmentForSpace(OVERWORLD_SPACE_ID);
+    const overlapsStaticWorld = staticEnvironment.colliders.some((candidate) => (
+      rectanglesOverlap(collider, candidate, 8)
+    ));
+    let overlapsStructure = false;
+    this.state.structures.forEach((structure) => {
+      if (
+        overlapsStructure
+        || !isBuildableId(structure.buildableId)
+        || !isBuildOrientation(structure.orientation)
+      ) {
+        return;
+      }
+      overlapsStructure = buildableCollidersConflict(
+        collider,
+        buildableCollider(
+          BUILDABLES[structure.buildableId],
+          structure.x,
+          structure.y,
+          structure.orientation,
+        ),
+      );
+    });
+    let overlapsActor = false;
+    this.state.players.forEach((candidate) => {
+      if (
+        !overlapsActor
+        && candidate.spaceId === OVERWORLD_SPACE_ID
+        && circleOverlapsRect(candidate, PLAYER_COLLISION_RADIUS + 3, collider)
+      ) {
+        overlapsActor = true;
+      }
+    });
+    this.state.zombies.forEach((zombie) => {
+      if (
+        !overlapsActor
+        && zombie.alive
+        && zombie.spaceId === OVERWORLD_SPACE_ID
+        && circleOverlapsRect(zombie, ZOMBIE_COLLISION_RADIUS + 3, collider)
+      ) {
+        overlapsActor = true;
+      }
+    });
+    this.state.resources.forEach((resource) => {
+      if (
+        !overlapsActor
+        && resource.available
+        && (resource.kind === "tree" || resource.kind === "stone")
+        && rectanglesOverlap(collider, resourceCollisionRect(resource.kind, resource.x, resource.y), 2)
+      ) {
+        overlapsActor = true;
+      }
+    });
+    if (overlapsStaticWorld || overlapsStructure || overlapsActor) {
+      this.sendBuildEvent(client, {
+        kind: "error",
+        message: "That position is blocked.",
+        structureId: "",
+      });
+      return;
+    }
+
+    const slots = this.playerInventory(player);
+    if (!removeInventoryBundle(slots, definition.cost)) {
+      this.sendBuildEvent(client, {
+        kind: "error",
+        message: "You do not have enough wood.",
+        structureId: "",
+      });
+      return;
+    }
+
+    const structure = new PlacedStructureState();
+    structure.id = `structure:${player.survivorId}:${input.operationId}`;
+    structure.buildableId = input.buildableId;
+    structure.x = x;
+    structure.y = y;
+    structure.orientation = input.orientation;
+    structure.placedBy = player.name;
+    this.state.structures.set(structure.id, structure);
+    this.commitPlayerInventory(player, slots);
+    this.sendBuildEvent(client, {
+      kind: "success",
+      message: `${definition.name} placed.`,
+      structureId: structure.id,
     });
     this.markPersistenceDirty();
   }
@@ -540,7 +838,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     this.lastFireAt.set(client.sessionId, now);
     player.facing = input.angle;
 
-    const environment = movementEnvironmentForSpace(player.spaceId);
+    const environment = this.movementEnvironment(player.spaceId);
     const blockingDistance = environment.colliders
       .map((collider) => rayRectHitDistance(player, input.angle, collider, PISTOL_RANGE))
       .filter((distance): distance is number => distance !== null)
@@ -689,7 +987,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
         { x: target.x - zombie.x, y: target.y - zombie.y },
         deltaSeconds,
         ZOMBIE_COLLISION_RADIUS,
-        movementEnvironmentForSpace(zombie.spaceId),
+        this.movementEnvironment(zombie.spaceId),
         ZOMBIE_MOVE_SPEED,
       );
       if (next.x !== zombie.x || next.y !== zombie.y) {
@@ -739,7 +1037,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       { x: spawn.position.x - zombie.x, y: spawn.position.y - zombie.y },
       deltaSeconds,
       ZOMBIE_COLLISION_RADIUS,
-      movementEnvironmentForSpace(zombie.spaceId),
+      this.movementEnvironment(zombie.spaceId),
       ZOMBIE_RETURN_SPEED,
     );
     zombie.x = next.x;
@@ -835,6 +1133,11 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     }
 
     if (player.spaceId === OVERWORLD_SPACE_ID) {
+      const resource = this.nearestHarvestableResource(player);
+      if (resource) {
+        this.startHarvest(client.sessionId, resource);
+        return;
+      }
       const building = BUILDINGS
         .filter(
           (candidate) => distanceBetween(player, candidate.exterior.entrance)
@@ -868,6 +1171,180 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     if (target) {
       this.startSearch(client.sessionId, target);
     }
+  }
+
+  private ensureResourcesAround(x: number, y: number): void {
+    const centerChunkX = worldToChunk(x);
+    const centerChunkY = worldToChunk(y);
+    for (
+      let chunkY = centerChunkY - RESOURCE_CHUNK_RADIUS;
+      chunkY <= centerChunkY + RESOURCE_CHUNK_RADIUS;
+      chunkY += 1
+    ) {
+      for (
+        let chunkX = centerChunkX - RESOURCE_CHUNK_RADIUS;
+        chunkX <= centerChunkX + RESOURCE_CHUNK_RADIUS;
+        chunkX += 1
+      ) {
+        const chunkKey = `${chunkX}:${chunkY}`;
+        if (this.loadedResourceChunks.has(chunkKey)) {
+          continue;
+        }
+        this.loadedResourceChunks.add(chunkKey);
+        generateChunkResources(this.state.seed, chunkX, chunkY).forEach((definition) => {
+          const overlapsBuilding = BUILDINGS.some((building) => {
+            const collider = building.exterior.collider;
+            return definition.x >= collider.x - 48
+              && definition.x <= collider.x + collider.width + 48
+              && definition.y >= collider.y - 48
+              && definition.y <= collider.y + collider.height + 48;
+          });
+          const resourceCollider = resourceCollisionRect(
+            definition.kind,
+            definition.x,
+            definition.y,
+          );
+          const overlapsStructure = [...this.state.structures.values()].some((structure) => (
+            isBuildableId(structure.buildableId)
+            && isBuildOrientation(structure.orientation)
+            && rectanglesOverlap(
+              resourceCollider,
+              buildableCollider(
+                BUILDABLES[structure.buildableId],
+                structure.x,
+                structure.y,
+                structure.orientation,
+              ),
+              6,
+            )
+          ));
+          const overlapsZombieSpawn = ZOMBIE_SPAWNS.some(
+            (spawn) => distanceBetween(definition, spawn.position) < 70,
+          );
+          if (
+            overlapsBuilding
+            || overlapsStructure
+            || overlapsZombieSpawn
+            || this.state.resources.has(definition.id)
+          ) {
+            return;
+          }
+          const resource = new ResourceNodeState();
+          resource.id = definition.id;
+          resource.kind = definition.kind;
+          resource.variant = definition.variant;
+          resource.x = definition.x;
+          resource.y = definition.y;
+          const persisted = this.persistedResources.get(resource.id);
+          if (persisted && !persisted.available && persisted.respawnAt > Date.now()) {
+            resource.available = false;
+            resource.respawnAt = persisted.respawnAt;
+          }
+          this.state.resources.set(resource.id, resource);
+        });
+      }
+    }
+  }
+
+  private nearestHarvestableResource(player: PlayerState): ResourceNodeState | undefined {
+    return [...this.state.resources.values()]
+      .filter((resource) => resource.available
+        && !resource.harvestingBy
+        && distanceBetween(player, resource) <= RESOURCE_INTERACTION_RADIUS)
+      .sort((left, right) => distanceBetween(player, left) - distanceBetween(player, right))[0];
+  }
+
+  private startHarvest(sessionId: string, resource: ResourceNodeState): void {
+    const player = this.state.players.get(sessionId);
+    if (!player || !resource.available || resource.harvestingBy) {
+      return;
+    }
+    player.activeSearchId = resource.id;
+    player.sprinting = false;
+    resource.harvestingBy = sessionId;
+    resource.harvestingByName = player.name;
+    resource.harvestStartedAt = Date.now();
+    resource.harvestDurationMs = resource.kind === "tree"
+      ? TREE_HARVEST_DURATION_MS
+      : STONE_HARVEST_DURATION_MS;
+    resource.harvestProgress = 0;
+  }
+
+  private updateResources(now: number): void {
+    this.state.resources.forEach((resource) => {
+      if (!resource.available && resource.respawnAt > 0 && now >= resource.respawnAt) {
+        resource.available = true;
+        resource.respawnAt = 0;
+        this.persistedResources.delete(resource.id);
+        this.markPersistenceDirty();
+      }
+      if (!resource.harvestingBy) {
+        return;
+      }
+      const player = this.state.players.get(resource.harvestingBy);
+      if (
+        !player
+        || player.activeSearchId !== resource.id
+        || player.spaceId !== OVERWORLD_SPACE_ID
+        || !resource.available
+        || distanceBetween(player, resource) > RESOURCE_INTERACTION_RADIUS
+      ) {
+        this.clearResourceHarvest(resource);
+        return;
+      }
+      resource.harvestProgress = calculateSearchProgress(
+        now,
+        resource.harvestStartedAt,
+        resource.harvestDurationMs,
+      );
+      if (resource.harvestProgress >= 1) {
+        this.completeHarvest(player, resource, now);
+      }
+    });
+  }
+
+  private completeHarvest(player: PlayerState, resource: ResourceNodeState, now: number): void {
+    const itemId = resource.kind === "tree" ? "wood" : "stone";
+    const amount = (resource.kind === "tree" ? 4 : 3) + resource.variant;
+    const slots = this.playerInventory(player);
+    if (addInventoryItem(slots, itemId, amount) !== amount) {
+      this.clearResourceHarvest(resource);
+      const client = this.clients.find((candidate) => candidate.sessionId === player.id);
+      if (client) {
+        this.sendInventoryEvent(client, { kind: "error", message: "Your field pack is full." });
+      }
+      return;
+    }
+    this.commitPlayerInventory(player, slots);
+    player.activeSearchId = "";
+    resource.available = false;
+    resource.respawnAt = now + RESOURCE_RESPAWN_MS;
+    const client = this.clients.find((candidate) => candidate.sessionId === player.id);
+    if (client) {
+      this.sendInventoryEvent(client, {
+        kind: "success",
+        message: `Harvested ${amount} ${itemId}.`,
+      });
+    }
+    this.clearResourceHarvest(resource);
+    this.persistedResources.set(resource.id, {
+      id: resource.id,
+      available: false,
+      respawnAt: resource.respawnAt,
+    });
+    this.markPersistenceDirty();
+  }
+
+  private clearResourceHarvest(resource: ResourceNodeState): void {
+    const player = this.state.players.get(resource.harvestingBy);
+    if (player?.activeSearchId === resource.id) {
+      player.activeSearchId = "";
+    }
+    resource.harvestingBy = "";
+    resource.harvestingByName = "";
+    resource.harvestStartedAt = 0;
+    resource.harvestDurationMs = 0;
+    resource.harvestProgress = 0;
   }
 
   private nearestSearchableContainer(player: PlayerState): SearchableContainerDefinition | undefined {
@@ -989,9 +1466,13 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     }
 
     const container = this.state.containers.get(player.activeSearchId);
+    const resource = this.state.resources.get(player.activeSearchId);
     player.activeSearchId = "";
     if (container?.searchingBy === sessionId) {
       this.clearContainerSearch(container);
+    }
+    if (resource?.harvestingBy === sessionId) {
+      this.clearResourceHarvest(resource);
     }
   }
 
@@ -1037,6 +1518,12 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       : OVERWORLD_SPACE_ID;
     player.maxHealth = PLAYER_MAX_HEALTH;
     player.health = Math.max(1, Math.min(player.maxHealth, inventoryCount(persisted.health)));
+    player.maxStamina = PLAYER_MAX_STAMINA;
+    player.stamina = Math.max(0, Math.min(
+      player.maxStamina,
+      finiteNumber(persisted.stamina, player.maxStamina),
+    ));
+    player.flashlight = persisted.flashlight === true;
     this.initializePlayerInventory(player, persisted.inventory.slots);
   }
 
@@ -1058,6 +1545,9 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       facing: player.facing,
       spaceId: player.spaceId,
       health: player.health,
+      stamina: player.stamina,
+      flashlight: player.flashlight,
+      starterKitGranted: this.starterKitsGranted.has(player.survivorId),
       inventory,
       updatedAt: new Date().toISOString(),
     });
@@ -1099,6 +1589,30 @@ export class WorldRoom extends Room<{ state: WorldState }> {
         droppedBy: pickup.droppedBy,
       };
     });
+    const structures: PersistedWorld["structures"] = {};
+    this.state.structures.forEach((structure) => {
+      if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
+        return;
+      }
+      structures[structure.id] = {
+        id: structure.id,
+        buildableId: structure.buildableId,
+        x: structure.x,
+        y: structure.y,
+        orientation: structure.orientation,
+        placedBy: structure.placedBy,
+      };
+    });
+    const resources: PersistedWorld["resources"] = {};
+    this.state.resources.forEach((resource) => {
+      if (!resource.available && resource.respawnAt > 0) {
+        resources[resource.id] = {
+          id: resource.id,
+          available: false,
+          respawnAt: resource.respawnAt,
+        };
+      }
+    });
 
     return {
       worldId: this.state.worldId,
@@ -1107,6 +1621,8 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       containers,
       zombies,
       pickups,
+      structures,
+      resources,
       updatedAt: new Date().toISOString(),
     };
   }

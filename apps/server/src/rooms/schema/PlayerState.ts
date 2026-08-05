@@ -12,6 +12,10 @@ export class PlayerState extends Schema {
   activeSearchId = "";
   health = 100;
   maxHealth = 100;
+  stamina = 100;
+  maxStamina = 100;
+  sprinting = false;
+  flashlight = false;
   scrap = 0;
   parts = 0;
   food = 0;
@@ -33,6 +37,10 @@ defineTypes(PlayerState, {
   activeSearchId: "string",
   health: "number",
   maxHealth: "number",
+  stamina: "number",
+  maxStamina: "number",
+  sprinting: "boolean",
+  flashlight: "boolean",
   scrap: "number",
   parts: "number",
   food: "number",

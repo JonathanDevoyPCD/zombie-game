@@ -35,6 +35,9 @@ function worldFixture(worldId: string, scrap: number): PersistedWorld {
         facing: 0,
         spaceId: "overworld",
         health: 100,
+        stamina: 100,
+        flashlight: false,
+        starterKitGranted: true,
         inventory: {
           slots: [
             { index: 0, itemId: "scrap", quantity: scrap },
@@ -48,6 +51,8 @@ function worldFixture(worldId: string, scrap: number): PersistedWorld {
     containers: {},
     zombies: {},
     pickups: {},
+    structures: {},
+    resources: {},
     updatedAt: "2026-08-04T00:00:00.000Z",
   };
 }
@@ -86,7 +91,14 @@ describe("FileWorldRepository", () => {
     if (!legacySurvivor) {
       throw new Error("Missing survivor fixture");
     }
-    const { health: _health, inventory: _inventory, ...versionOneSurvivor } = legacySurvivor;
+    const {
+      health: _health,
+      stamina: _stamina,
+      flashlight: _flashlight,
+      starterKitGranted: _starterKitGranted,
+      inventory: _inventory,
+      ...versionOneSurvivor
+    } = legacySurvivor;
     const { zombies: _zombies, ...versionOneWorld } = legacy;
     await writeFile(filePath, JSON.stringify({
       schemaVersion: 1,
@@ -168,6 +180,80 @@ describe("FileWorldRepository", () => {
       { index: 3, itemId: "medicine", quantity: 1 },
     ]);
     expect(restored?.pickups).toEqual({});
+  });
+
+  it("migrates version-four worlds while preserving pickups", async () => {
+    const { filePath, repository } = await repositoryFixture();
+    const versionFourWorld = worldFixture("dev-world", 5);
+    versionFourWorld.pickups["pickup:01"] = {
+      id: "pickup:01",
+      itemId: "wood",
+      quantity: 3,
+      x: 12,
+      y: 24,
+      spaceId: "overworld",
+      droppedBy: "Test Survivor",
+    };
+    const { structures: _structures, ...legacyWorld } = versionFourWorld;
+    await writeFile(filePath, JSON.stringify({
+      schemaVersion: 4,
+      worlds: { "dev-world": legacyWorld },
+    }), "utf8");
+
+    const restored = await repository.loadWorld("dev-world");
+    expect(restored?.pickups["pickup:01"]?.quantity).toBe(3);
+    expect(restored?.structures).toEqual({});
+    expect(restored?.survivors["survivor-1"]?.starterKitGranted).toBe(false);
+  });
+
+  it("migrates version-five worlds while preserving structures and starter grants", async () => {
+    const { filePath, repository } = await repositoryFixture();
+    const versionFiveWorld = worldFixture("dev-world", 5);
+    versionFiveWorld.structures["structure:01"] = {
+      id: "structure:01",
+      buildableId: "wood-wall",
+      x: 128,
+      y: 64,
+      orientation: "horizontal",
+      placedBy: "Test Survivor",
+    };
+    const survivor = versionFiveWorld.survivors["survivor-1"];
+    if (!survivor) {
+      throw new Error("Missing survivor fixture");
+    }
+    const { starterKitGranted: _starterKitGranted, ...legacySurvivor } = survivor;
+    legacySurvivor.inventory.slots.push({ index: 3, itemId: "wood", quantity: 8 });
+    await writeFile(filePath, JSON.stringify({
+      schemaVersion: 5,
+      worlds: {
+        "dev-world": {
+          ...versionFiveWorld,
+          survivors: { "survivor-1": legacySurvivor },
+        },
+      },
+    }), "utf8");
+
+    const restored = await repository.loadWorld("dev-world");
+    expect(restored?.structures["structure:01"]?.orientation).toBe("horizontal");
+    expect(restored?.survivors["survivor-1"]?.starterKitGranted).toBe(true);
+  });
+
+  it("migrates version-seven survivor controls and initializes resource persistence", async () => {
+    const { filePath, repository } = await repositoryFixture();
+    const versionSevenWorld = worldFixture("dev-world", 5);
+    const { resources: _resources, ...legacyWorld } = versionSevenWorld;
+    await writeFile(filePath, JSON.stringify({
+      schemaVersion: 7,
+      worlds: { "dev-world": legacyWorld },
+    }), "utf8");
+
+    const restored = await repository.loadWorld("dev-world");
+    expect(restored?.survivors["survivor-1"]).toMatchObject({
+      stamina: 100,
+      flashlight: false,
+      starterKitGranted: true,
+    });
+    expect(restored?.resources).toEqual({});
   });
 
   it("refuses unknown schema versions instead of overwriting them", async () => {

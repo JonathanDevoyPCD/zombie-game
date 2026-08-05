@@ -7,9 +7,13 @@ Replace a file while keeping its filename and transparent canvas alignment to ch
 ## Current mappings
 
 - `Structures/regular-house.png`: shared exterior for the summer-house prefab
+- `Structures/wood-wall-horizontal.png`: horizontal wooden wall buildable
+- `Structures/wood-wall-vertical.png`: vertical wooden wall buildable
 - `Containers/chest.png`: searchable supply chest
 - `Items/*.png`: inventory icons keyed by item ID
 - `Terrain/Grass/*.png`: deterministic ambient grass variants
+- `Terrain/Resources/tree-01.png` through `tree-03.png`: harvestable tree variants
+- `Terrain/Resources/stone-01.png` through `stone-03.png`: harvestable stone variants
 - `Terrain/Rocks/*.png`: deterministic ambient rock variants
 - `Characters/Players/raider-1-*.png`: 128px-frame player animation strips
 - `Characters/Zombies/zombie-*-*.png`: 128px-frame zombie animation strips

@@ -120,7 +120,7 @@ const SUMMER_HOUSE_CONTAINER_PREFABS: readonly SearchableContainerPrefabDefiniti
     collider: { x: -151, y: -89, width: 50, height: 30 },
     interactionRadius: 42,
     searchDurationMs: 4500,
-    loot: { scrap: 12, parts: 3, medicine: 1 },
+    loot: { scrap: 12, parts: 3, medicine: 1, wood: 12 },
   },
 ] as const;
 

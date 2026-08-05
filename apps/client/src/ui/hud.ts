@@ -1,8 +1,16 @@
 import { BIOMES, type BiomeId } from "@last-survivor/content";
 import type { InventorySnapshot } from "@last-survivor/shared";
+import { SPRITE_ASSETS } from "../assets/spriteCatalog";
 
 let lootToastTimer = 0;
 let combatToastTimer = 0;
+let resourceIconsReady = false;
+
+export interface MinimapMarker {
+  x: number;
+  y: number;
+  kind: "player" | "ally" | "zombie" | "building" | "structure" | "resource";
+}
 
 function setText(id: string, value: string): void {
   const element = document.getElementById(id);
@@ -31,12 +39,108 @@ export function updateFrameRate(frameRate: number): void {
 }
 
 export function updateInventory(inventory: InventorySnapshot): void {
+  initializeResourceIcons();
   setText("inventory-scrap", String(inventory.scrap));
   setText("inventory-parts", String(inventory.parts));
   setText("inventory-food", String(inventory.food));
   setText("inventory-medicine", String(inventory.medicine));
   setText("inventory-wood", String(inventory.wood));
   setText("inventory-stone", String(inventory.stone));
+}
+
+export function updateSignalReadout(areaName: string, distanceFromCamp: number): void {
+  setText("signal-time", "Time: Day");
+  setText("signal-district", `District: ${areaName}`);
+  setText("signal-distance", `Camp: ${Math.max(0, Math.round(distanceFromCamp))}m`);
+}
+
+export function updateStamina(stamina: number, maxStamina: number, sprinting: boolean): void {
+  const safeMaximum = Math.max(1, maxStamina);
+  const ratio = Math.max(0, Math.min(1, stamina / safeMaximum));
+  const fill = document.getElementById("stamina-fill");
+  if (fill) {
+    fill.style.transform = `scaleX(${ratio})`;
+    fill.classList.toggle("is-sprinting", sprinting);
+  }
+  setText("stamina-value", `${Math.round(stamina)} / ${Math.round(safeMaximum)}`);
+}
+
+export function updateFlashlight(enabled: boolean): void {
+  const status = document.getElementById("flashlight-status");
+  if (status) {
+    status.textContent = enabled ? "ON" : "OFF";
+    status.classList.toggle("is-on", enabled);
+  }
+}
+
+export function updateMinimap(
+  player: { x: number; y: number },
+  markers: readonly MinimapMarker[],
+): void {
+  const canvas = document.getElementById("minimap") as HTMLCanvasElement | null;
+  const context = canvas?.getContext("2d");
+  if (!canvas || !context) {
+    return;
+  }
+  const center = canvas.width / 2;
+  const radius = center - 8;
+  const scale = 0.13;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.save();
+  context.beginPath();
+  context.arc(center, center, radius, 0, Math.PI * 2);
+  context.clip();
+  context.fillStyle = "#17221b";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "rgba(143, 166, 132, 0.12)";
+  context.lineWidth = 1;
+  for (let offset = -48; offset <= 48; offset += 16) {
+    context.beginPath();
+    context.moveTo(center + offset, 0);
+    context.lineTo(center + offset, canvas.height);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(0, center + offset);
+    context.lineTo(canvas.width, center + offset);
+    context.stroke();
+  }
+  const colors: Record<MinimapMarker["kind"], string> = {
+    player: "#e3cb70",
+    ally: "#8fc6d9",
+    zombie: "#bd655c",
+    building: "#8b7656",
+    structure: "#b28b58",
+    resource: "#78a95e",
+  };
+  markers.forEach((marker) => {
+    const x = center + (marker.x - player.x) * scale;
+    const y = center + (marker.y - player.y) * scale;
+    if (Math.hypot(x - center, y - center) > radius - 3) {
+      return;
+    }
+    context.fillStyle = colors[marker.kind];
+    const size = marker.kind === "player" ? 5 : 4;
+    context.fillRect(x - size / 2, y - size / 2, size, size);
+  });
+  context.restore();
+  context.strokeStyle = "rgba(199, 218, 184, 0.28)";
+  context.lineWidth = 1;
+  context.beginPath();
+  context.arc(center, center, radius, 0, Math.PI * 2);
+  context.stroke();
+}
+
+function initializeResourceIcons(): void {
+  if (resourceIconsReady) {
+    return;
+  }
+  resourceIconsReady = true;
+  (Object.keys(SPRITE_ASSETS.items) as Array<keyof typeof SPRITE_ASSETS.items>).forEach((itemId) => {
+    const image = document.getElementById(`resource-${itemId}-icon`) as HTMLImageElement | null;
+    if (image) {
+      image.src = SPRITE_ASSETS.items[itemId];
+    }
+  });
 }
 
 export function updateHealth(health: number, maxHealth: number): void {

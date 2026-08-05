@@ -16,7 +16,8 @@
     "@colyseus/ws-transport": "^0.17.13",
     "@last-survivor/content": "*",
     "@last-survivor/shared": "*",
-    "@last-survivor/simulation": "*"
+    "@last-survivor/simulation": "*",
+    "@last-survivor/worldgen": "*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
