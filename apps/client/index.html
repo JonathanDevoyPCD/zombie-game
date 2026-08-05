@@ -38,7 +38,28 @@
           <span><b id="inventory-parts">0</b> Parts</span>
           <span><b id="inventory-food">0</b> Food</span>
           <span><b id="inventory-medicine">0</b> Medicine</span>
+          <span><b id="inventory-wood">0</b> Wood</span>
+          <span><b id="inventory-stone">0</b> Stone</span>
         </div>
+      </section>
+      <section id="inventory-menu" class="inventory-menu" aria-label="Field pack inventory" hidden>
+        <header>
+          <div>
+            <span>FIELD PACK</span>
+            <strong>Inventory</strong>
+          </div>
+          <span id="inventory-capacity">0 / 16</span>
+          <button id="inventory-close" type="button" aria-label="Close inventory">×</button>
+        </header>
+        <div id="inventory-slot-grid" class="inventory-slot-grid"></div>
+        <footer>
+          <span id="inventory-details">Select an item stack</span>
+          <div>
+            <button id="inventory-split" type="button" disabled>Split</button>
+            <button id="inventory-drop" type="button" disabled>Drop</button>
+          </div>
+        </footer>
+        <p id="inventory-status" aria-live="polite"></p>
       </section>
       <div id="interaction-prompt" class="interaction-prompt" hidden>
         <kbd>E</kbd>

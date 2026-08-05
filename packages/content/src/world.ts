@@ -13,7 +13,7 @@ export interface MovementEnvironment {
   colliders: readonly WorldRect[];
 }
 
-export type LootItemId = "scrap" | "parts" | "food" | "medicine";
+export type LootItemId = ItemId;
 
 export type LootBundle = Readonly<Partial<Record<LootItemId, number>>>;
 
@@ -264,3 +264,4 @@ export function house48ContainerById(
   const container = buildingContainerById(containerId);
   return container?.buildingInstanceId === HOUSE_48.id ? container : undefined;
 }
+import type { ItemId } from "./items";

@@ -35,12 +35,19 @@ function worldFixture(worldId: string, scrap: number): PersistedWorld {
         facing: 0,
         spaceId: "overworld",
         health: 100,
-        inventory: { scrap, parts: 2, food: 1, medicine: 0 },
+        inventory: {
+          slots: [
+            { index: 0, itemId: "scrap", quantity: scrap },
+            { index: 1, itemId: "parts", quantity: 2 },
+            { index: 2, itemId: "food", quantity: 1 },
+          ],
+        },
         updatedAt: "2026-08-04T00:00:00.000Z",
       },
     },
     containers: {},
     zombies: {},
+    pickups: {},
     updatedAt: "2026-08-04T00:00:00.000Z",
   };
 }
@@ -58,7 +65,7 @@ describe("FileWorldRepository", () => {
     await repository.saveWorld(worldFixture("dev-world", 19));
 
     const restored = await repository.loadWorld("dev-world");
-    expect(restored?.survivors["survivor-1"]?.inventory.scrap).toBe(19);
+    expect(restored?.survivors["survivor-1"]?.inventory.slots[0]?.quantity).toBe(19);
   });
 
   it("serializes concurrent writes without losing separate worlds", async () => {
@@ -79,20 +86,28 @@ describe("FileWorldRepository", () => {
     if (!legacySurvivor) {
       throw new Error("Missing survivor fixture");
     }
-    const { health: _health, ...versionOneSurvivor } = legacySurvivor;
+    const { health: _health, inventory: _inventory, ...versionOneSurvivor } = legacySurvivor;
     const { zombies: _zombies, ...versionOneWorld } = legacy;
     await writeFile(filePath, JSON.stringify({
       schemaVersion: 1,
       worlds: {
         "dev-world": {
           ...versionOneWorld,
-          survivors: { "survivor-1": versionOneSurvivor },
+          survivors: {
+            "survivor-1": {
+              ...versionOneSurvivor,
+              inventory: { scrap: 14, parts: 2, food: 1, medicine: 0 },
+            },
+          },
         },
       },
     }), "utf8");
 
     const restored = await repository.loadWorld("dev-world");
-    expect(restored?.survivors["survivor-1"]?.inventory.scrap).toBe(14);
+    expect(restored?.survivors["survivor-1"]?.inventory.slots[0]).toMatchObject({
+      itemId: "scrap",
+      quantity: 14,
+    });
     expect(restored?.survivors["survivor-1"]?.health).toBe(100);
     expect(restored?.zombies).toEqual({});
   });
@@ -121,6 +136,38 @@ describe("FileWorldRepository", () => {
 
     const restored = await repository.loadWorld("dev-world");
     expect(restored?.zombies["zombie:01"]?.contributions).toEqual({});
+  });
+
+  it("migrates version-three resource counters into inventory slots", async () => {
+    const { filePath, repository } = await repositoryFixture();
+    const legacy = worldFixture("dev-world", 0);
+    const survivor = legacy.survivors["survivor-1"];
+    if (!survivor) {
+      throw new Error("Missing survivor fixture");
+    }
+    await writeFile(filePath, JSON.stringify({
+      schemaVersion: 3,
+      worlds: {
+        "dev-world": {
+          ...legacy,
+          survivors: {
+            "survivor-1": {
+              ...survivor,
+              inventory: { scrap: 23, parts: 4, food: 2, medicine: 1 },
+            },
+          },
+        },
+      },
+    }), "utf8");
+
+    const restored = await repository.loadWorld("dev-world");
+    expect(restored?.survivors["survivor-1"]?.inventory.slots).toEqual([
+      { index: 0, itemId: "scrap", quantity: 23 },
+      { index: 1, itemId: "parts", quantity: 4 },
+      { index: 2, itemId: "food", quantity: 2 },
+      { index: 3, itemId: "medicine", quantity: 1 },
+    ]);
+    expect(restored?.pickups).toEqual({});
   });
 
   it("refuses unknown schema versions instead of overwriting them", async () => {

@@ -8,10 +8,13 @@ export const ClientMessage = {
   INPUT: "input",
   INTERACT: "interact",
   FIRE: "fire",
+  INVENTORY_MOVE: "inventory-move",
+  INVENTORY_DROP: "inventory-drop",
 } as const;
 
 export const ServerMessage = {
   COMBAT_EVENT: "combat-event",
+  INVENTORY_EVENT: "inventory-event",
 } as const;
 
 export interface MovementInput {
@@ -25,6 +28,19 @@ export interface MovementInput {
 export interface FireWeaponInput {
   sequence: number;
   angle: number;
+}
+
+export interface InventoryMoveInput {
+  operationId: string;
+  fromIndex: number;
+  toIndex: number;
+  quantity?: number;
+}
+
+export interface InventoryDropInput {
+  operationId: string;
+  slotIndex: number;
+  quantity?: number;
 }
 
 export interface JoinWorldOptions {
@@ -80,6 +96,31 @@ export interface InventorySnapshot {
   parts: number;
   food: number;
   medicine: number;
+  wood: number;
+  stone: number;
+  capacity: number;
+  slots: InventorySlotSnapshot[];
+}
+
+export interface InventorySlotSnapshot {
+  index: number;
+  itemId: string;
+  quantity: number;
+}
+
+export interface InventoryEvent {
+  kind: "success" | "error";
+  message: string;
+}
+
+export interface WorldPickupSnapshot {
+  id: string;
+  itemId: string;
+  quantity: number;
+  x: number;
+  y: number;
+  spaceId: string;
+  droppedBy: string;
 }
 
 export interface ContainerSnapshot {

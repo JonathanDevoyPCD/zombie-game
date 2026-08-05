@@ -18,7 +18,25 @@ function cloneWorld(world: PersistedWorld): PersistedWorld {
   return structuredClone(world);
 }
 
-function migrateVersionOne(source: Record<string, unknown>): PersistenceDocument {
+function legacyInventorySlots(value: unknown): Array<{ index: number; itemId: string; quantity: number }> {
+  const inventory = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  if (Array.isArray(inventory.slots)) {
+    return inventory.slots as Array<{ index: number; itemId: string; quantity: number }>;
+  }
+
+  return ["scrap", "parts", "food", "medicine", "wood", "stone"]
+    .map((itemId, index) => ({
+      index,
+      itemId,
+      quantity: Math.max(0, Math.floor(Number(inventory[itemId]) || 0)),
+    }))
+    .filter((slot) => slot.quantity > 0);
+}
+
+function migrateLegacyDocument(
+  source: Record<string, unknown>,
+  sourceVersion: 1 | 2 | 3,
+): PersistenceDocument {
   const legacyWorlds = source.worlds as Record<string, Record<string, unknown>>;
   const worlds = Object.fromEntries(
     Object.entries(legacyWorlds).map(([worldId, legacyWorld]) => {
@@ -26,31 +44,26 @@ function migrateVersionOne(source: Record<string, unknown>): PersistenceDocument
       const survivors = Object.fromEntries(
         Object.entries(legacySurvivors).map(([survivorId, survivor]) => [
           survivorId,
-          { ...survivor, health: 100 },
+          {
+            ...survivor,
+            health: sourceVersion === 1 ? 100 : survivor.health,
+            inventory: { slots: legacyInventorySlots(survivor.inventory) },
+          },
         ]),
       );
-      return [worldId, { ...legacyWorld, survivors, zombies: {} }];
-    }),
-  );
-
-  return {
-    schemaVersion: PERSISTENCE_SCHEMA_VERSION,
-    worlds,
-  } as PersistenceDocument;
-}
-
-function migrateVersionTwo(source: Record<string, unknown>): PersistenceDocument {
-  const legacyWorlds = source.worlds as Record<string, Record<string, unknown>>;
-  const worlds = Object.fromEntries(
-    Object.entries(legacyWorlds).map(([worldId, legacyWorld]) => {
-      const legacyZombies = legacyWorld.zombies as Record<string, Record<string, unknown>>;
+      const legacyZombies = sourceVersion === 1
+        ? {}
+        : legacyWorld.zombies as Record<string, Record<string, unknown>>;
       const zombies = Object.fromEntries(
         Object.entries(legacyZombies).map(([zombieId, zombie]) => [
           zombieId,
-          { ...zombie, contributions: {} },
+          {
+            ...zombie,
+            contributions: sourceVersion === 2 ? {} : zombie.contributions,
+          },
         ]),
       );
-      return [worldId, { ...legacyWorld, zombies }];
+      return [worldId, { ...legacyWorld, survivors, zombies, pickups: {} }];
     }),
   );
 
@@ -96,11 +109,11 @@ export class FileWorldRepository implements WorldRepository {
     }
 
     const parsed = JSON.parse(source) as Record<string, unknown>;
-    if (parsed.schemaVersion === 1 && parsed.worlds) {
-      return migrateVersionOne(parsed);
-    }
-    if (parsed.schemaVersion === 2 && parsed.worlds) {
-      return migrateVersionTwo(parsed);
+    if (
+      (parsed.schemaVersion === 1 || parsed.schemaVersion === 2 || parsed.schemaVersion === 3)
+      && parsed.worlds
+    ) {
+      return migrateLegacyDocument(parsed, parsed.schemaVersion);
     }
 
     if (parsed.schemaVersion !== PERSISTENCE_SCHEMA_VERSION || !parsed.worlds) {

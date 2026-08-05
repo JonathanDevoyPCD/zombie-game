@@ -1,10 +1,13 @@
-export const PERSISTENCE_SCHEMA_VERSION = 3;
+export const PERSISTENCE_SCHEMA_VERSION = 4;
+
+export interface PersistedInventorySlot {
+  index: number;
+  itemId: string;
+  quantity: number;
+}
 
 export interface PersistedInventory {
-  scrap: number;
-  parts: number;
-  food: number;
-  medicine: number;
+  slots: PersistedInventorySlot[];
 }
 
 export interface PersistedSurvivor {
@@ -35,12 +38,23 @@ export interface PersistedZombie {
   contributions: Record<string, { damage: number; name: string }>;
 }
 
+export interface PersistedWorldPickup {
+  id: string;
+  itemId: string;
+  quantity: number;
+  x: number;
+  y: number;
+  spaceId: string;
+  droppedBy: string;
+}
+
 export interface PersistedWorld {
   worldId: string;
   seed: string;
   survivors: Record<string, PersistedSurvivor>;
   containers: Record<string, PersistedContainer>;
   zombies: Record<string, PersistedZombie>;
+  pickups: Record<string, PersistedWorldPickup>;
   updatedAt: string;
 }
 

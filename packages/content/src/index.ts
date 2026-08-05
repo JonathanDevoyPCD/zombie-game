@@ -25,26 +25,6 @@ export const BIOMES: Record<BiomeId, BiomeDefinition> = {
   wasteland: { id: "wasteland", name: "Wasteland", color: 0x6d6a4e, accent: 0x8c8966 },
 };
 
-export type ItemCategory = "resource" | "tool" | "consumable" | "ammo" | "quest";
-
-export interface ItemDefinition {
-  id: string;
-  name: string;
-  category: ItemCategory;
-  maxStack: number;
-}
-
-export const ITEMS: Record<string, ItemDefinition> = {
-  scrap: { id: "scrap", name: "Scrap", category: "resource", maxStack: 999 },
-  wood: { id: "wood", name: "Wood", category: "resource", maxStack: 999 },
-  stone: { id: "stone", name: "Stone", category: "resource", maxStack: 999 },
-  parts: { id: "parts", name: "Parts", category: "resource", maxStack: 999 },
-  cleanWater: { id: "cleanWater", name: "Clean Water", category: "consumable", maxStack: 10 },
-  medicalSupplies: { id: "medicalSupplies", name: "Medical Supplies", category: "consumable", maxStack: 10 },
-  pistolAmmo: { id: "pistolAmmo", name: "Pistol Ammunition", category: "ammo", maxStack: 120 },
-  axe: { id: "axe", name: "Axe", category: "tool", maxStack: 1 },
-  pickaxe: { id: "pickaxe", name: "Pickaxe", category: "tool", maxStack: 1 },
-};
-
 export * from "./world";
 export * from "./combat";
+export * from "./items";

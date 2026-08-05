@@ -35,6 +35,8 @@ export function updateInventory(inventory: InventorySnapshot): void {
   setText("inventory-parts", String(inventory.parts));
   setText("inventory-food", String(inventory.food));
   setText("inventory-medicine", String(inventory.medicine));
+  setText("inventory-wood", String(inventory.wood));
+  setText("inventory-stone", String(inventory.stone));
 }
 
 export function updateHealth(health: number, maxHealth: number): void {

@@ -1,4 +1,5 @@
-import { defineTypes, Schema } from "@colyseus/schema";
+import { ArraySchema, defineTypes, Schema } from "@colyseus/schema";
+import { InventorySlotState } from "./InventorySlotState.js";
 
 export class PlayerState extends Schema {
   id = "";
@@ -15,6 +16,9 @@ export class PlayerState extends Schema {
   parts = 0;
   food = 0;
   medicine = 0;
+  wood = 0;
+  stone = 0;
+  inventorySlots = new ArraySchema<InventorySlotState>();
   lastProcessedInput = 0;
 }
 
@@ -33,5 +37,8 @@ defineTypes(PlayerState, {
   parts: "number",
   food: "number",
   medicine: "number",
+  wood: "number",
+  stone: "number",
+  inventorySlots: [InventorySlotState],
   lastProcessedInput: "number",
 });

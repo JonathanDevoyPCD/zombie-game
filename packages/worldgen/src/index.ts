@@ -28,6 +28,18 @@ export interface GeneratedChunk {
   tiles: GeneratedTile[];
 }
 
+export type AmbientPropKind = "grass" | "rock";
+
+export interface GeneratedAmbientProp {
+  id: string;
+  kind: AmbientPropKind;
+  variant: number;
+  x: number;
+  y: number;
+  scale: number;
+  flipX: boolean;
+}
+
 function hashString(value: string): number {
   let hash = 2166136261;
 
@@ -181,3 +193,59 @@ export function generateChunk(seed: string, chunkX: number, chunkY: number): Gen
   };
 }
 
+export function generateChunkProps(
+  seed: string,
+  chunkX: number,
+  chunkY: number,
+): GeneratedAmbientProp[] {
+  const numericSeed = hashString(seed);
+  const cellSize = 128;
+  const cellsPerChunk = CHUNK_SIZE / cellSize;
+  const props: GeneratedAmbientProp[] = [];
+
+  for (let localCellY = 0; localCellY < cellsPerChunk; localCellY += 1) {
+    for (let localCellX = 0; localCellX < cellsPerChunk; localCellX += 1) {
+      const globalCellX = chunkX * cellsPerChunk + localCellX;
+      const globalCellY = chunkY * cellsPerChunk + localCellY;
+      const centerX = chunkX * CHUNK_SIZE + localCellX * cellSize + cellSize / 2;
+      const centerY = chunkY * CHUNK_SIZE + localCellY * cellSize + cellSize / 2;
+      const x = centerX + (randomAt(numericSeed, globalCellX, globalCellY, 701) - 0.5) * 76;
+      const y = centerY + (randomAt(numericSeed, globalCellX, globalCellY, 709) - 0.5) * 76;
+      const tile = sampleTile(seed, Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));
+      const grassChance = {
+        grassland: 0.48,
+        forest: 0.58,
+        desert: 0.12,
+        tundra: 0.18,
+        badlands: 0.09,
+        wasteland: 0.14,
+      }[tile.biome];
+      const rockChance = {
+        grassland: 0.1,
+        forest: 0.08,
+        desert: 0.16,
+        tundra: 0.17,
+        badlands: 0.24,
+        wasteland: 0.2,
+      }[tile.biome];
+      const roll = randomAt(numericSeed, globalCellX, globalCellY, 719);
+      const kind: AmbientPropKind | null = roll < rockChance
+        ? "rock"
+        : roll < rockChance + grassChance ? "grass" : null;
+      if (!kind) {
+        continue;
+      }
+      props.push({
+        id: `${chunkId(chunkX, chunkY)}:prop:${localCellX}:${localCellY}`,
+        kind,
+        variant: hash2D(numericSeed, globalCellX, globalCellY, 727) % 10,
+        x,
+        y,
+        scale: 0.72 + randomAt(numericSeed, globalCellX, globalCellY, 733) * 0.38,
+        flipX: randomAt(numericSeed, globalCellX, globalCellY, 739) > 0.5,
+      });
+    }
+  }
+
+  return props;
+}

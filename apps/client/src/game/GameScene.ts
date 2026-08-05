@@ -2,11 +2,13 @@ import {
   ALL_BUILDING_CONTAINERS,
   BIOMES,
   BUILDINGS,
+  ITEMS,
   OVERWORLD_SPACE_ID,
   PLAYER_COLLISION_RADIUS,
   STARTING_SAFE_ZONE_RADIUS,
   buildingByInteriorSpace,
   buildingContainerById,
+  isItemId,
   movementEnvironmentForSpace,
   type ResolvedBuildingDefinition,
 } from "@last-survivor/content";
@@ -15,9 +17,11 @@ import {
   type CombatEvent,
   type ContainerSnapshot,
   type InventorySnapshot,
+  type InventoryEvent,
   type MovementInput,
   type PlayerSnapshot,
   type ZombieSnapshot,
+  type WorldPickupSnapshot,
 } from "@last-survivor/shared";
 import { integrateMovementWithCollisions } from "@last-survivor/simulation";
 import {
@@ -25,10 +29,12 @@ import {
   CHUNK_TILES,
   TILE_SIZE,
   generateChunk,
+  generateChunkProps,
   sampleTile,
   worldToChunk,
 } from "@last-survivor/worldgen";
 import Phaser from "phaser";
+import { SPRITE_ASSETS } from "../assets/spriteCatalog";
 import { getOrCreateSurvivorId } from "../identity/survivorIdentity";
 import { WorldConnection, type WorldSnapshot } from "../network/WorldConnection";
 import {
@@ -43,9 +49,18 @@ import {
   updateInventory,
   updateWorldReadout,
 } from "../ui/hud";
+import {
+  closeInventory,
+  initializeInventoryUi,
+  isInventoryOpen,
+  showInventoryEvent,
+  toggleInventory,
+  updateInventoryMenu,
+} from "../ui/inventory";
 
 interface PlayerVisual {
   container: Phaser.GameObjects.Container;
+  sprite: Phaser.GameObjects.Sprite;
   targetX: number;
   targetY: number;
   spaceId: string;
@@ -55,15 +70,24 @@ interface PlayerVisual {
   searchBarFill: Phaser.GameObjects.Rectangle;
   searchLabel: Phaser.GameObjects.Text;
   facingMarker: Phaser.GameObjects.Triangle;
+  lastVisualX: number;
+  lastVisualY: number;
+  animationLockedUntil: number;
 }
 
 interface ZombieVisual {
   container: Phaser.GameObjects.Container;
+  sprite: Phaser.GameObjects.Sprite;
   targetX: number;
   targetY: number;
   spaceId: string;
   alive: boolean;
   healthBarFill: Phaser.GameObjects.Rectangle;
+  type: number;
+  aggroTarget: string;
+  lastVisualX: number;
+  lastVisualY: number;
+  animationLockedUntil: number;
 }
 
 interface ContainerVisual {
@@ -73,6 +97,11 @@ interface ContainerVisual {
   label: Phaser.GameObjects.Text;
 }
 
+interface PickupVisual {
+  container: Phaser.GameObjects.Container;
+  spaceId: string;
+}
+
 type VisibleGameObject = Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Visible;
 
 const INPUT_STEP_MS = INPUT_STEP_SECONDS * 1000;
@@ -80,14 +109,13 @@ const MAX_PREDICTION_STEPS_PER_FRAME = 5;
 const REMOTE_INTERPOLATION_RATE = 14;
 const HOUSE_TEXTURE_KEY = "house-48-exterior";
 const CHEST_TEXTURE_KEY = "house-48-chest";
-const HOUSE_ASSET_URL = new URL(
-  "../../../../sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - House.png",
-  import.meta.url,
-).href;
-const CHEST_ASSET_URL = new URL(
-  "../../../../sprites/Tile-Vector-Terrain/Top-Down Simple Summer_Prop - Treasure Chest.png",
-  import.meta.url,
-).href;
+const itemTextureKey = (itemId: string): string => `item:${itemId}`;
+const PLAYER_TEXTURE_KEYS = {
+  idle: "player:raider-1:idle",
+  walk: "player:raider-1:walk",
+  shot: "player:raider-1:shot",
+} as const;
+const zombieTextureKey = (type: number, action: string): string => `zombie:${type}:${action}`;
 
 function distanceBetween(left: { x: number; y: number }, right: { x: number; y: number }): number {
   return Math.hypot(left.x - right.x, left.y - right.y);
@@ -101,18 +129,27 @@ function stableDepthOffset(id: string): number {
   return Math.abs(hash % 1000) / 10000;
 }
 
+function zombieType(id: string): number {
+  const match = id.match(/(\d+)$/);
+  return match ? ((Number(match[1]) - 1) % 4) + 1 : 1;
+}
+
 export class GameScene extends Phaser.Scene {
   private readonly connection = new WorldConnection();
   private readonly playerVisuals = new Map<string, PlayerVisual>();
   private readonly zombieVisuals = new Map<string, ZombieVisual>();
   private readonly terrainChunks = new Map<string, Phaser.GameObjects.Image>();
+  private readonly ambientProps = new Map<string, Phaser.GameObjects.Image>();
   private readonly terrainTextureUsage = new Map<string, number>();
   private readonly containers = new Map<string, ContainerSnapshot>();
   private readonly containerVisuals = new Map<string, ContainerVisual>();
+  private readonly pickups = new Map<string, WorldPickupSnapshot>();
+  private readonly pickupVisuals = new Map<string, PickupVisual>();
   private readonly exteriorBuildings: Phaser.GameObjects.Image[] = [];
   private readonly interiorObjectsBySpace = new Map<string, VisibleGameObject[]>();
   private cursors!: Record<"up" | "down" | "left" | "right", Phaser.Input.Keyboard.Key>;
   private interactKey!: Phaser.Input.Keyboard.Key;
+  private inventoryKey!: Phaser.Input.Keyboard.Key;
   private safeZoneVisual!: Phaser.GameObjects.Graphics;
   private localSessionId = "";
   private currentSpaceId = OVERWORLD_SPACE_ID;
@@ -138,8 +175,31 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload(): void {
-    this.load.image(HOUSE_TEXTURE_KEY, HOUSE_ASSET_URL);
-    this.load.image(CHEST_TEXTURE_KEY, CHEST_ASSET_URL);
+    this.load.image(HOUSE_TEXTURE_KEY, SPRITE_ASSETS.structures.regularHouse);
+    this.load.image(CHEST_TEXTURE_KEY, SPRITE_ASSETS.containers.chest);
+    Object.entries(SPRITE_ASSETS.items).forEach(([itemId, assetUrl]) => {
+      this.load.image(itemTextureKey(itemId), assetUrl);
+    });
+    SPRITE_ASSETS.terrain.grass.forEach((assetUrl, index) => {
+      this.load.image(`ambient:grass:${index}`, assetUrl);
+    });
+    SPRITE_ASSETS.terrain.rocks.forEach((assetUrl, index) => {
+      this.load.image(`ambient:rock:${index}`, assetUrl);
+    });
+    Object.entries(SPRITE_ASSETS.players.raider1).forEach(([action, assetUrl]) => {
+      this.load.spritesheet(PLAYER_TEXTURE_KEYS[action as keyof typeof PLAYER_TEXTURE_KEYS], assetUrl, {
+        frameWidth: 128,
+        frameHeight: 128,
+      });
+    });
+    SPRITE_ASSETS.zombies.forEach((assets, index) => {
+      Object.entries(assets).forEach(([action, assetUrl]) => {
+        this.load.spritesheet(zombieTextureKey(index + 1, action), assetUrl, {
+          frameWidth: 128,
+          frameHeight: 128,
+        });
+      });
+    });
   }
 
   create(): void {
@@ -152,6 +212,24 @@ export class GameScene extends Phaser.Scene {
       right: Phaser.Input.Keyboard.KeyCodes.D,
     }) as Record<"up" | "down" | "left" | "right", Phaser.Input.Keyboard.Key>;
     this.interactKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this.inventoryKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.I);
+    initializeInventoryUi({
+      move: (fromIndex, toIndex, quantity) => {
+        this.connection.moveInventory({
+          operationId: crypto.randomUUID(),
+          fromIndex,
+          toIndex,
+          ...(quantity === undefined ? {} : { quantity }),
+        });
+      },
+      drop: (slotIndex, quantity) => {
+        this.connection.dropInventory({
+          operationId: crypto.randomUUID(),
+          slotIndex,
+          ...(quantity === undefined ? {} : { quantity }),
+        });
+      },
+    });
     this.input.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
       if (pointer.button === 0) {
         this.fireAtPointer(pointer);
@@ -160,6 +238,7 @@ export class GameScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(0x101713);
     this.cameras.main.setZoom(1.35);
+    this.createCharacterAnimations();
     this.createExteriorObjects();
     this.createInteriorObjects();
     this.renderTerrain(0, 0);
@@ -174,6 +253,7 @@ export class GameScene extends Phaser.Scene {
         },
         (snapshot) => this.applySnapshot(snapshot),
         (event) => this.handleCombatEvent(event),
+        (event) => this.handleInventoryEvent(event),
       )
       .catch((error: unknown) => {
         console.error("Unable to connect to world server", error);
@@ -184,7 +264,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (Phaser.Input.Keyboard.JustDown(this.interactKey) && !this.isTransitioning) {
+    if (Phaser.Input.Keyboard.JustDown(this.inventoryKey)) {
+      toggleInventory();
+    }
+    if (
+      Phaser.Input.Keyboard.JustDown(this.interactKey)
+      && !this.isTransitioning
+      && !isInventoryOpen()
+    ) {
       this.connection.interact();
     }
 
@@ -192,6 +279,7 @@ export class GameScene extends Phaser.Scene {
     this.updatePerformanceReadout(delta);
     this.updateRemotePlayers(delta);
     this.updateZombies(delta);
+    this.updateCharacterAnimations();
     this.updatePlayerDepths();
     this.updateZombieDepths();
     this.updateSearchProgressBars();
@@ -200,6 +288,39 @@ export class GameScene extends Phaser.Scene {
     if (localPlayer) {
       this.updateLocalAim(localPlayer);
       this.updateLocalPresentation(localPlayer);
+    }
+  }
+
+  private createCharacterAnimations(): void {
+    this.anims.create({
+      key: PLAYER_TEXTURE_KEYS.idle,
+      frames: this.anims.generateFrameNumbers(PLAYER_TEXTURE_KEYS.idle),
+      frameRate: 5,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: PLAYER_TEXTURE_KEYS.walk,
+      frames: this.anims.generateFrameNumbers(PLAYER_TEXTURE_KEYS.walk),
+      frameRate: 9,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: PLAYER_TEXTURE_KEYS.shot,
+      frames: this.anims.generateFrameNumbers(PLAYER_TEXTURE_KEYS.shot),
+      frameRate: 18,
+      repeat: 0,
+    });
+
+    for (let type = 1; type <= SPRITE_ASSETS.zombies.length; type += 1) {
+      (["idle", "walk", "attack", "hurt", "dead"] as const).forEach((action) => {
+        const key = zombieTextureKey(type, action);
+        this.anims.create({
+          key,
+          frames: this.anims.generateFrameNumbers(key),
+          frameRate: action === "idle" ? 5 : action === "walk" ? 8 : 10,
+          repeat: action === "idle" || action === "walk" || action === "attack" ? -1 : 0,
+        });
+      });
     }
   }
 
@@ -225,6 +346,7 @@ export class GameScene extends Phaser.Scene {
       !localPlayer
       || this.currentSpaceId !== OVERWORLD_SPACE_ID
       || this.isTransitioning
+      || isInventoryOpen()
       || localPlayer.activeSearchId
     ) {
       return;
@@ -254,6 +376,16 @@ export class GameScene extends Phaser.Scene {
 
   private handleCombatEvent(event: CombatEvent): void {
     if (event.kind === "shot" && this.currentSpaceId === OVERWORLD_SPACE_ID) {
+      const shooter = this.playerVisuals.get(event.actorId);
+      if (shooter) {
+        shooter.animationLockedUntil = this.time.now + 420;
+        shooter.sprite.play(PLAYER_TEXTURE_KEYS.shot, true);
+      }
+      const hitZombie = this.zombieVisuals.get(event.targetId);
+      if (hitZombie && event.amount > 0) {
+        hitZombie.animationLockedUntil = this.time.now + 260;
+        hitZombie.sprite.play(zombieTextureKey(hitZombie.type, "hurt"), true);
+      }
       const tracer = this.add.graphics().setDepth(20000);
       tracer.lineStyle(2, event.amount > 0 ? 0xf3cf6a : 0xd8d2ad, 0.9);
       tracer.lineBetween(event.originX, event.originY - 4, event.targetX, event.targetY);
@@ -279,6 +411,13 @@ export class GameScene extends Phaser.Scene {
 
     if (event.kind === "zombie-killed" || event.kind === "player-respawned") {
       showCombatNotification(event.message);
+    }
+  }
+
+  private handleInventoryEvent(event: InventoryEvent): void {
+    showInventoryEvent(event);
+    if (event.kind === "success") {
+      showLootNotification(event.message);
     }
   }
 
@@ -466,7 +605,9 @@ export class GameScene extends Phaser.Scene {
   private readInput(): MovementInput {
     this.sequence += 1;
     const localPlayer = this.playerVisuals.get(this.localSessionId);
-    const acceptMovement = !this.isTransitioning && !localPlayer?.activeSearchId;
+    const acceptMovement = !this.isTransitioning
+      && !isInventoryOpen()
+      && !localPlayer?.activeSearchId;
     return {
       sequence: this.sequence,
       up: acceptMovement && this.cursors.up.isDown,
@@ -501,6 +642,42 @@ export class GameScene extends Phaser.Scene {
     this.zombieVisuals.forEach((visual) => {
       visual.container.x = Phaser.Math.Linear(visual.container.x, visual.targetX, blend);
       visual.container.y = Phaser.Math.Linear(visual.container.y, visual.targetY, blend);
+    });
+  }
+
+  private updateCharacterAnimations(): void {
+    this.playerVisuals.forEach((visual) => {
+      const moved = Math.hypot(
+        visual.container.x - visual.lastVisualX,
+        visual.container.y - visual.lastVisualY,
+      ) > 0.08;
+      visual.sprite.setFlipX(Math.cos(visual.facingMarker.rotation) < 0);
+      if (this.time.now >= visual.animationLockedUntil) {
+        const animation = moved ? PLAYER_TEXTURE_KEYS.walk : PLAYER_TEXTURE_KEYS.idle;
+        if (visual.sprite.anims.currentAnim?.key !== animation) {
+          visual.sprite.play(animation, true);
+        }
+      }
+      visual.lastVisualX = visual.container.x;
+      visual.lastVisualY = visual.container.y;
+    });
+
+    this.zombieVisuals.forEach((visual) => {
+      const movementX = visual.container.x - visual.lastVisualX;
+      const movementY = visual.container.y - visual.lastVisualY;
+      const moved = Math.hypot(movementX, movementY) > 0.05;
+      if (Math.abs(movementX) > 0.01) {
+        visual.sprite.setFlipX(movementX < 0);
+      }
+      if (this.time.now >= visual.animationLockedUntil) {
+        const action = moved ? "walk" : visual.aggroTarget ? "attack" : "idle";
+        const animation = zombieTextureKey(visual.type, action);
+        if (visual.sprite.anims.currentAnim?.key !== animation) {
+          visual.sprite.play(animation, true);
+        }
+      }
+      visual.lastVisualX = visual.container.x;
+      visual.lastVisualY = visual.container.y;
     });
   }
 
@@ -584,6 +761,22 @@ export class GameScene extends Phaser.Scene {
     }
 
     const playerPosition = { x, y };
+    const nearbyPickup = [...this.pickups.values()]
+      .filter(
+        (pickup) => pickup.spaceId === this.currentSpaceId
+          && distanceBetween(playerPosition, pickup) <= 38,
+      )
+      .sort(
+        (left, right) => distanceBetween(playerPosition, left)
+          - distanceBetween(playerPosition, right),
+      )[0];
+    if (nearbyPickup && isItemId(nearbyPickup.itemId)) {
+      showInteractionPrompt(
+        `Pick up ${nearbyPickup.quantity} ${ITEMS[nearbyPickup.itemId].name.toLowerCase()}`,
+      );
+      return;
+    }
+
     if (this.currentSpaceId === OVERWORLD_SPACE_ID) {
       const nearbyBuilding = BUILDINGS
         .filter(
@@ -656,6 +849,7 @@ export class GameScene extends Phaser.Scene {
       this.cameraFollowingLocalPlayer = false;
       this.cameras.main.stopFollow();
       hideInteractionPrompt();
+      closeInventory();
       return;
     }
 
@@ -671,6 +865,19 @@ export class GameScene extends Phaser.Scene {
     this.containers.clear();
     snapshot.containers.forEach((container) => this.containers.set(container.id, container));
     this.updateContainerPresentation();
+
+    this.pickups.clear();
+    snapshot.pickups.forEach((pickup) => {
+      this.pickups.set(pickup.id, pickup);
+      this.upsertPickup(pickup);
+    });
+    const activePickupIds = new Set(snapshot.pickups.map((pickup) => pickup.id));
+    this.pickupVisuals.forEach((visual, id) => {
+      if (!activePickupIds.has(id)) {
+        visual.container.destroy();
+        this.pickupVisuals.delete(id);
+      }
+    });
 
     const activeZombieIds = new Set(snapshot.zombies.map((zombie) => zombie.id));
     snapshot.zombies.forEach((zombie) => this.upsertZombie(zombie));
@@ -690,6 +897,7 @@ export class GameScene extends Phaser.Scene {
         alive: zombie.alive,
         aggroTarget: zombie.aggroTarget,
       })));
+      gameElement.dataset.pickups = JSON.stringify(snapshot.pickups);
     }
 
     const current = snapshot.players.find((player) => player.id === snapshot.sessionId);
@@ -739,15 +947,17 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const isLocal = player.id === this.localSessionId;
-    const shadow = this.add.ellipse(0, 13, 25, 9, 0x08100c, 0.35);
-    const body = this.add.rectangle(0, 0, 18, 24, isLocal ? 0xd6b657 : 0x7ba9bb).setStrokeStyle(2, 0x101713);
-    const head = this.add.circle(0, -17, 7, 0xd7a47e).setStrokeStyle(2, 0x101713);
+    const shadow = this.add.ellipse(0, 2, 27, 9, 0x08100c, 0.3);
+    const sprite = this.add
+      .sprite(0, -30, PLAYER_TEXTURE_KEYS.idle)
+      .setScale(0.82)
+      .play(PLAYER_TEXTURE_KEYS.idle);
     const facing = this.add.triangle(0, 0, 0, -4, 12, 0, 0, 4, 0xece9d8)
-      .setPosition(15, 0)
+      .setPosition(28, -20)
+      .setScale(0.7)
       .setRotation(player.facing);
     const label = this.add
-      .text(0, -34, player.name, {
+      .text(0, -72, player.name, {
         color: "#f2f0df",
         fontFamily: "Arial, sans-serif",
         fontSize: "10px",
@@ -756,15 +966,15 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     const searchBarBackground = this.add
-      .rectangle(0, -50, 44, 7, 0x101713, 0.92)
+      .rectangle(0, -87, 44, 7, 0x101713, 0.92)
       .setStrokeStyle(1, 0x718078)
       .setVisible(false);
     const searchBarFill = this.add
-      .rectangle(-20, -50, 40, 3, 0xe3cb70)
+      .rectangle(-20, -87, 40, 3, 0xe3cb70)
       .setOrigin(0, 0.5)
       .setVisible(false);
     const searchLabel = this.add
-      .text(0, -58, "SEARCHING 0%", {
+      .text(0, -96, "SEARCHING 0%", {
         color: "#f2f0df",
         fontFamily: "Arial, sans-serif",
         fontSize: "7px",
@@ -775,8 +985,7 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
     const container = this.add.container(player.x, player.y, [
       shadow,
-      body,
-      head,
+      sprite,
       facing,
       label,
       searchBarBackground,
@@ -786,6 +995,7 @@ export class GameScene extends Phaser.Scene {
 
     this.playerVisuals.set(player.id, {
       container,
+      sprite,
       targetX: player.x,
       targetY: player.y,
       spaceId: player.spaceId,
@@ -795,6 +1005,9 @@ export class GameScene extends Phaser.Scene {
       searchBarFill,
       searchLabel,
       facingMarker: facing,
+      lastVisualX: player.x,
+      lastVisualY: player.y,
+      animationLockedUntil: 0,
     });
   }
 
@@ -805,20 +1018,20 @@ export class GameScene extends Phaser.Scene {
       existing.targetY = zombie.y;
       existing.spaceId = zombie.spaceId;
       existing.alive = zombie.alive;
+      existing.aggroTarget = zombie.aggroTarget;
       existing.container.setVisible(zombie.alive && zombie.spaceId === this.currentSpaceId);
       existing.healthBarFill.setScale(Math.max(0, zombie.health / zombie.maxHealth), 1);
       return;
     }
 
-    const shadow = this.add.ellipse(0, 13, 27, 9, 0x08100c, 0.38);
-    const body = this.add.ellipse(0, 0, 18, 28, 0x596547).setStrokeStyle(2, 0x172019);
-    const head = this.add.circle(-1, -17, 7, 0x809263).setStrokeStyle(2, 0x172019);
-    const arms = this.add.graphics();
-    arms.lineStyle(4, 0x667653, 1);
-    arms.lineBetween(-7, -3, -14, 8);
-    arms.lineBetween(7, -3, 15, 5);
+    const type = zombieType(zombie.id);
+    const shadow = this.add.ellipse(0, 2, 27, 9, 0x08100c, 0.32);
+    const sprite = this.add
+      .sprite(0, -30, zombieTextureKey(type, "idle"))
+      .setScale(0.82)
+      .play(zombieTextureKey(type, "idle"));
     const label = this.add
-      .text(0, -42, zombie.name.toUpperCase(), {
+      .text(0, -74, zombie.name.toUpperCase(), {
         color: "#d3d9bc",
         fontFamily: "Arial, sans-serif",
         fontSize: "8px",
@@ -826,16 +1039,14 @@ export class GameScene extends Phaser.Scene {
         strokeThickness: 3,
       })
       .setOrigin(0.5);
-    const healthBackground = this.add.rectangle(0, -32, 34, 5, 0x1b211d, 0.95);
+    const healthBackground = this.add.rectangle(0, -63, 34, 5, 0x1b211d, 0.95);
     const healthBarFill = this.add
-      .rectangle(-16, -32, 32, 3, 0xb9574f)
+      .rectangle(-16, -63, 32, 3, 0xb9574f)
       .setOrigin(0, 0.5)
       .setScale(Math.max(0, zombie.health / zombie.maxHealth), 1);
     const container = this.add.container(zombie.x, zombie.y, [
       shadow,
-      body,
-      head,
-      arms,
+      sprite,
       label,
       healthBackground,
       healthBarFill,
@@ -843,12 +1054,50 @@ export class GameScene extends Phaser.Scene {
     container.setVisible(zombie.alive && zombie.spaceId === this.currentSpaceId);
     this.zombieVisuals.set(zombie.id, {
       container,
+      sprite,
       targetX: zombie.x,
       targetY: zombie.y,
       spaceId: zombie.spaceId,
       alive: zombie.alive,
       healthBarFill,
+      type,
+      aggroTarget: zombie.aggroTarget,
+      lastVisualX: zombie.x,
+      lastVisualY: zombie.y,
+      animationLockedUntil: 0,
     });
+  }
+
+  private upsertPickup(pickup: WorldPickupSnapshot): void {
+    const existing = this.pickupVisuals.get(pickup.id);
+    if (existing) {
+      existing.spaceId = pickup.spaceId;
+      existing.container.setPosition(pickup.x, pickup.y);
+      existing.container.setVisible(pickup.spaceId === this.currentSpaceId);
+      const quantityLabel = existing.container.getByName("quantity") as Phaser.GameObjects.Text | null;
+      quantityLabel?.setText(String(pickup.quantity));
+      return;
+    }
+    if (!isItemId(pickup.itemId)) {
+      return;
+    }
+    const shadow = this.add.ellipse(0, 5, 30, 11, 0x07100c, 0.32);
+    const image = this.add.image(0, 0, itemTextureKey(pickup.itemId));
+    image.setDisplaySize(32, 32);
+    const quantity = this.add
+      .text(14, 8, String(pickup.quantity), {
+        color: "#f2f0df",
+        fontFamily: "Arial, sans-serif",
+        fontSize: "8px",
+        stroke: "#101713",
+        strokeThickness: 3,
+      })
+      .setName("quantity")
+      .setOrigin(1, 1);
+    const container = this.add.container(pickup.x, pickup.y, [shadow, image, quantity]);
+    container.setDepth(pickup.y + 0.015);
+    container.setVisible(pickup.spaceId === this.currentSpaceId);
+    this.pickupVisuals.set(pickup.id, { container, spaceId: pickup.spaceId });
   }
 
   private predictLocalInput(input: MovementInput): void {
@@ -923,6 +1172,7 @@ export class GameScene extends Phaser.Scene {
     this.exteriorBuildings.forEach((building) => building.setVisible(showExterior));
     this.safeZoneVisual.setVisible(showExterior);
     this.terrainChunks.forEach((image) => image.setVisible(showExterior));
+    this.ambientProps.forEach((image) => image.setVisible(showExterior));
     this.interiorObjectsBySpace.forEach((objects, spaceId) => {
       objects.forEach((object) => object.setVisible(spaceId === this.currentSpaceId));
     });
@@ -936,6 +1186,9 @@ export class GameScene extends Phaser.Scene {
     });
     this.zombieVisuals.forEach((visual) => {
       visual.container.setVisible(visual.alive && visual.spaceId === this.currentSpaceId);
+    });
+    this.pickupVisuals.forEach((visual) => {
+      visual.container.setVisible(visual.spaceId === this.currentSpaceId);
     });
   }
 
@@ -957,14 +1210,17 @@ export class GameScene extends Phaser.Scene {
 
   private updateInventoryPresentation(inventory: InventorySnapshot): void {
     updateInventory(inventory);
+    updateInventoryMenu(inventory);
     if (this.previousInventory) {
-      const labels: Record<keyof InventorySnapshot, string> = {
+      const labels = {
         scrap: "scrap",
         parts: "parts",
         food: "food",
         medicine: "medicine",
-      };
-      const gains = (Object.keys(labels) as Array<keyof InventorySnapshot>)
+        wood: "wood",
+        stone: "stone",
+      } as const;
+      const gains = (Object.keys(labels) as Array<keyof typeof labels>)
         .map((item) => ({ item, amount: inventory[item] - this.previousInventory![item] }))
         .filter((gain) => gain.amount > 0)
         .map((gain) => `+${gain.amount} ${labels[gain.item]}`);
@@ -974,7 +1230,10 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    this.previousInventory = { ...inventory };
+    this.previousInventory = {
+      ...inventory,
+      slots: inventory.slots.map((slot) => ({ ...slot })),
+    };
   }
 
   private playersInCurrentSpace(): number {
@@ -991,6 +1250,7 @@ export class GameScene extends Phaser.Scene {
     this.renderedChunkX = centerChunkX;
     this.renderedChunkY = centerChunkY;
     const activeTextureKeys = new Set<string>();
+    const activePropIds = new Set<string>();
 
     for (let chunkY = centerChunkY - 1; chunkY <= centerChunkY + 1; chunkY += 1) {
       for (let chunkX = centerChunkX - 1; chunkX <= centerChunkX + 1; chunkX += 1) {
@@ -1011,6 +1271,32 @@ export class GameScene extends Phaser.Scene {
             .setVisible(this.currentSpaceId === OVERWORLD_SPACE_ID);
           this.terrainChunks.set(textureKey, image);
         }
+
+        generateChunkProps(this.worldSeed, chunkX, chunkY).forEach((prop) => {
+          const overlapsBuilding = BUILDINGS.some((building) => {
+            const collider = building.exterior.collider;
+            return prop.x >= collider.x - 32
+              && prop.x <= collider.x + collider.width + 32
+              && prop.y >= collider.y - 32
+              && prop.y <= collider.y + collider.height + 32;
+          });
+          if (overlapsBuilding) {
+            return;
+          }
+          activePropIds.add(prop.id);
+          if (this.ambientProps.has(prop.id)) {
+            return;
+          }
+          const image = this.add
+            .image(prop.x, prop.y, `ambient:${prop.kind}:${prop.variant}`)
+            .setOrigin(0.5, 0.78)
+            .setFlipX(prop.flipX)
+            .setDepth(prop.kind === "grass" ? prop.y - 1 : prop.y + 0.005)
+            .setVisible(this.currentSpaceId === OVERWORLD_SPACE_ID);
+          const displaySize = (prop.kind === "grass" ? 42 : 38) * prop.scale;
+          image.setDisplaySize(displaySize, displaySize);
+          this.ambientProps.set(prop.id, image);
+        });
       }
     }
 
@@ -1018,6 +1304,12 @@ export class GameScene extends Phaser.Scene {
       if (!activeTextureKeys.has(textureKey)) {
         image.destroy();
         this.terrainChunks.delete(textureKey);
+      }
+    });
+    this.ambientProps.forEach((image, propId) => {
+      if (!activePropIds.has(propId)) {
+        image.destroy();
+        this.ambientProps.delete(propId);
       }
     });
 
@@ -1085,6 +1377,8 @@ export class GameScene extends Phaser.Scene {
   private clearTerrainImages(): void {
     this.terrainChunks.forEach((image) => image.destroy());
     this.terrainChunks.clear();
+    this.ambientProps.forEach((image) => image.destroy());
+    this.ambientProps.clear();
   }
 
   private terrainTextureKey(chunkX: number, chunkY: number): string {

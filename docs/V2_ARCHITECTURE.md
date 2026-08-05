@@ -28,7 +28,7 @@ packages/
   simulation/   Pure movement and gameplay calculations
 ```
 
-The root `index.html`, `game.js`, `styles.css`, and current assets remain the playable V1 prototype.
+The root `index.html`, `game.js`, `styles.css`, and current assets remain the playable V1 prototype. V2 runtime art is copied into the centralized `sprites/Sprites-Loaded` library so temporary artwork can be replaced without changing content IDs or saved state.
 
 ## Runtime Model
 
@@ -55,7 +55,7 @@ Every mutation must be idempotent or carry a unique operation identifier so reco
 
 ## BiomeGen
 
-The world is divided into square chunks. Every tile samples global coordinates, so chunk borders are seamless. Layered deterministic fields create continental elevation, temperature, moisture, and corruption or hazard. These fields classify terrain into grassland, forest, desert, tundra, badlands, wasteland, water, and transition zones.
+The world is divided into square chunks. Every tile samples global coordinates, so chunk borders are seamless. Layered deterministic fields create continental elevation, temperature, moisture, and corruption or hazard. These fields classify terrain into grassland, forest, desert, tundra, badlands, rocky lands, wasteland, water, and transition zones.
 
 Generation is staged:
 
@@ -124,4 +124,3 @@ Two browser clients can join the same private development world, move through id
 - final art or final UI
 - migrating prototype local-storage saves into V2
 - generating every biome before one biome is fun and stable
-

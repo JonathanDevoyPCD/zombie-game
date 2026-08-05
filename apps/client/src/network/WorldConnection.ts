@@ -6,10 +6,15 @@ import {
   type CombatEvent,
   type ContainerSnapshot,
   type FireWeaponInput,
+  type InventoryDropInput,
+  type InventoryEvent,
+  type InventoryMoveInput,
+  type InventorySlotSnapshot,
   type JoinWorldOptions,
   type MovementInput,
   type PlayerSnapshot,
   type ZombieSnapshot,
+  type WorldPickupSnapshot,
 } from "@last-survivor/shared";
 
 interface NetworkPlayerState extends Omit<PlayerSnapshot, "inventory"> {
@@ -17,6 +22,9 @@ interface NetworkPlayerState extends Omit<PlayerSnapshot, "inventory"> {
   parts: number;
   food: number;
   medicine: number;
+  wood: number;
+  stone: number;
+  inventorySlots: Array<InventorySlotSnapshot>;
 }
 
 interface NetworkWorldState {
@@ -26,6 +34,7 @@ interface NetworkWorldState {
   players: Map<string, NetworkPlayerState>;
   containers: Map<string, ContainerSnapshot>;
   zombies: Map<string, ZombieSnapshot>;
+  pickups: Map<string, WorldPickupSnapshot>;
 }
 
 export interface WorldSnapshot {
@@ -36,10 +45,12 @@ export interface WorldSnapshot {
   players: PlayerSnapshot[];
   containers: ContainerSnapshot[];
   zombies: ZombieSnapshot[];
+  pickups: WorldPickupSnapshot[];
 }
 
 type SnapshotListener = (snapshot: WorldSnapshot) => void;
 type CombatEventListener = (event: CombatEvent) => void;
+type InventoryEventListener = (event: InventoryEvent) => void;
 
 const endpoint = import.meta.env.VITE_SERVER_URL ?? "http://127.0.0.1:2567";
 
@@ -48,17 +59,23 @@ export class WorldConnection {
   private room: Room<unknown, NetworkWorldState> | null = null;
   private listener: SnapshotListener | null = null;
   private combatEventListener: CombatEventListener | null = null;
+  private inventoryEventListener: InventoryEventListener | null = null;
 
   async connect(
     options: JoinWorldOptions,
     listener: SnapshotListener,
     combatEventListener?: CombatEventListener,
+    inventoryEventListener?: InventoryEventListener,
   ): Promise<void> {
     this.listener = listener;
     this.combatEventListener = combatEventListener ?? null;
+    this.inventoryEventListener = inventoryEventListener ?? null;
     this.room = await this.client.joinOrCreate<NetworkWorldState>(WORLD_ROOM, options);
     this.room.onMessage(ServerMessage.COMBAT_EVENT, (event: CombatEvent) => {
       this.combatEventListener?.(event);
+    });
+    this.room.onMessage(ServerMessage.INVENTORY_EVENT, (event: InventoryEvent) => {
+      this.inventoryEventListener?.(event);
     });
     this.room.onStateChange(() => this.publish());
     this.room.onLeave(() => {
@@ -82,6 +99,14 @@ export class WorldConnection {
 
   fire(input: FireWeaponInput): void {
     this.room?.send(ClientMessage.FIRE, input);
+  }
+
+  moveInventory(input: InventoryMoveInput): void {
+    this.room?.send(ClientMessage.INVENTORY_MOVE, input);
+  }
+
+  dropInventory(input: InventoryDropInput): void {
+    this.room?.send(ClientMessage.INVENTORY_DROP, input);
   }
 
   async disconnect(): Promise<void> {
@@ -117,6 +142,14 @@ export class WorldConnection {
           parts: player.parts,
           food: player.food,
           medicine: player.medicine,
+          wood: player.wood,
+          stone: player.stone,
+          capacity: player.inventorySlots.length,
+          slots: [...player.inventorySlots].map((slot) => ({
+            index: slot.index,
+            itemId: slot.itemId,
+            quantity: slot.quantity,
+          })),
         },
         lastProcessedInput: player.lastProcessedInput,
       });
@@ -153,6 +186,19 @@ export class WorldConnection {
       });
     });
 
+    const pickups: WorldPickupSnapshot[] = [];
+    state.pickups?.forEach((pickup) => {
+      pickups.push({
+        id: pickup.id,
+        itemId: pickup.itemId,
+        quantity: pickup.quantity,
+        x: pickup.x,
+        y: pickup.y,
+        spaceId: pickup.spaceId,
+        droppedBy: pickup.droppedBy,
+      });
+    });
+
     this.listener({
       connected: true,
       sessionId: this.room.sessionId,
@@ -161,6 +207,7 @@ export class WorldConnection {
       players,
       containers,
       zombies,
+      pickups,
     });
   }
 
@@ -177,6 +224,7 @@ export class WorldConnection {
       players: [],
       containers: [],
       zombies: [],
+      pickups: [],
     });
   }
 }

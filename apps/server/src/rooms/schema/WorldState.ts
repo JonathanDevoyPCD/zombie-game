@@ -2,6 +2,7 @@ import { defineTypes, MapSchema, Schema } from "@colyseus/schema";
 import { ContainerState } from "./ContainerState.js";
 import { PlayerState } from "./PlayerState.js";
 import { ZombieState } from "./ZombieState.js";
+import { WorldPickupState } from "./WorldPickupState.js";
 
 export class WorldState extends Schema {
   worldId = "dev-world";
@@ -10,6 +11,7 @@ export class WorldState extends Schema {
   players = new MapSchema<PlayerState>();
   containers = new MapSchema<ContainerState>();
   zombies = new MapSchema<ZombieState>();
+  pickups = new MapSchema<WorldPickupState>();
 }
 
 defineTypes(WorldState, {
@@ -19,4 +21,5 @@ defineTypes(WorldState, {
   players: { map: PlayerState },
   containers: { map: ContainerState },
   zombies: { map: ZombieState },
+  pickups: { map: WorldPickupState },
 });

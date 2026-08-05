@@ -6,17 +6,24 @@ import {
   SIMULATION_HZ,
   type CombatEvent,
   type FireWeaponInput,
+  type InventoryDropInput,
+  type InventoryEvent,
+  type InventoryMoveInput,
   type JoinWorldOptions,
   type MovementInput,
 } from "@last-survivor/shared";
 import {
   ALL_BUILDING_CONTAINERS,
   BUILDINGS,
+  INVENTORY_SLOT_COUNT,
+  ITEMS,
   OVERWORLD_SPACE_ID,
   PLAYER_COLLISION_RADIUS,
   buildingByInteriorSpace,
   buildingContainerById,
   movementEnvironmentForSpace,
+  isItemId,
+  type ItemId,
   type LootItemId,
   type SearchableContainerDefinition,
   PISTOL_DAMAGE,
@@ -50,13 +57,27 @@ import { type Client, Room, ServerError } from "@colyseus/core";
 import { worldRepository } from "../persistence/defaultRepository.js";
 import type {
   PersistedInventory,
+  PersistedInventorySlot,
   PersistedSurvivor,
   PersistedWorld,
 } from "../persistence/types.js";
+import {
+  addInventoryBundle,
+  addInventoryItem,
+  cloneInventorySlots,
+  emptyInventorySlots,
+  inventoryTotals,
+  moveInventoryStack,
+  removeInventoryItemAt,
+  type InventoryBundle,
+  type InventorySlotLike,
+} from "../inventory/inventory.js";
 import { ContainerState } from "./schema/ContainerState.js";
+import { InventorySlotState } from "./schema/InventorySlotState.js";
 import { PlayerState } from "./schema/PlayerState.js";
 import { WorldState } from "./schema/WorldState.js";
 import { ZombieState } from "./schema/ZombieState.js";
+import { WorldPickupState } from "./schema/WorldPickupState.js";
 
 function cleanIdentifier(value: unknown, fallback: string): string {
   if (typeof value !== "string") {
@@ -104,6 +125,56 @@ function sanitizeFireInput(value: unknown): FireWeaponInput | null {
   return { sequence: Number(candidate.sequence), angle: candidate.angle };
 }
 
+function cleanOperationId(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+}
+
+function sanitizeInventoryMoveInput(value: unknown): InventoryMoveInput | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<InventoryMoveInput>;
+  const operationId = cleanOperationId(candidate.operationId);
+  if (
+    !operationId
+    || !Number.isInteger(candidate.fromIndex)
+    || !Number.isInteger(candidate.toIndex)
+  ) {
+    return null;
+  }
+  const input: InventoryMoveInput = {
+    operationId,
+    fromIndex: Number(candidate.fromIndex),
+    toIndex: Number(candidate.toIndex),
+  };
+  if (candidate.quantity !== undefined && Number.isInteger(candidate.quantity)) {
+    input.quantity = Number(candidate.quantity);
+  }
+  return input;
+}
+
+function sanitizeInventoryDropInput(value: unknown): InventoryDropInput | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<InventoryDropInput>;
+  const operationId = cleanOperationId(candidate.operationId);
+  if (!operationId || !Number.isInteger(candidate.slotIndex)) {
+    return null;
+  }
+  const input: InventoryDropInput = {
+    operationId,
+    slotIndex: Number(candidate.slotIndex),
+  };
+  if (candidate.quantity !== undefined && Number.isInteger(candidate.quantity)) {
+    input.quantity = Number(candidate.quantity);
+  }
+  return input;
+}
+
 const CHECKPOINT_INTERVAL_MS = 5000;
 
 export class WorldRoom extends Room<{ state: WorldState }> {
@@ -116,6 +187,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   private readonly lastZombieAttackAt = new Map<string, number>();
   private readonly playerInvulnerableUntil = new Map<string, number>();
   private readonly damageLedgers = new Map<string, Map<string, { damage: number; name: string }>>();
+  private readonly processedInventoryOperations = new Map<string, Set<string>>();
   private readonly persistedSurvivors = new Map<string, PersistedSurvivor>();
   private persistenceDirty = false;
   private persistenceQueue: Promise<void> = Promise.resolve();
@@ -171,6 +243,21 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       this.state.zombies.set(zombie.id, zombie);
     });
 
+    Object.values(persistedWorld?.pickups ?? {}).forEach((persistedPickup) => {
+      if (!isItemId(persistedPickup.itemId) || persistedPickup.quantity <= 0) {
+        return;
+      }
+      const pickup = new WorldPickupState();
+      pickup.id = persistedPickup.id;
+      pickup.itemId = persistedPickup.itemId;
+      pickup.quantity = inventoryCount(persistedPickup.quantity);
+      pickup.x = finiteNumber(persistedPickup.x, 0);
+      pickup.y = finiteNumber(persistedPickup.y, 0);
+      pickup.spaceId = persistedPickup.spaceId;
+      pickup.droppedBy = persistedPickup.droppedBy;
+      this.state.pickups.set(pickup.id, pickup);
+    });
+
     this.onMessage(ClientMessage.INPUT, (client, payload: unknown) => {
       const nextInput = sanitizeMovementInput(payload);
       const player = this.state.players.get(client.sessionId);
@@ -188,6 +275,12 @@ export class WorldRoom extends Room<{ state: WorldState }> {
 
     this.onMessage(ClientMessage.INTERACT, (client) => this.handleInteraction(client));
     this.onMessage(ClientMessage.FIRE, (client, payload: unknown) => this.handleFire(client, payload));
+    this.onMessage(ClientMessage.INVENTORY_MOVE, (client, payload: unknown) => {
+      this.handleInventoryMove(client, payload);
+    });
+    this.onMessage(ClientMessage.INVENTORY_DROP, (client, payload: unknown) => {
+      this.handleInventoryDrop(client, payload);
+    });
 
     this.setSimulationInterval((deltaTime) => this.simulate(deltaTime), 1000 / SIMULATION_HZ);
     this.clock.setInterval(() => void this.flushPersistence(), CHECKPOINT_INTERVAL_MS);
@@ -219,12 +312,14 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       player.x = Math.cos(angle) * 48;
       player.y = Math.sin(angle) * 48;
       player.spaceId = OVERWORLD_SPACE_ID;
+      this.initializePlayerInventory(player);
     }
 
     this.state.players.set(client.sessionId, player);
     this.inputQueues.set(client.sessionId, []);
     this.simulationBudgets.set(client.sessionId, 0);
     this.playerInvulnerableUntil.set(client.sessionId, Date.now() + 1000);
+    this.processedInventoryOperations.set(client.sessionId, new Set());
     this.captureSurvivor(player);
     this.markPersistenceDirty();
   }
@@ -242,6 +337,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     this.lastFireAt.delete(client.sessionId);
     this.lastFireSequence.delete(client.sessionId);
     this.playerInvulnerableUntil.delete(client.sessionId);
+    this.processedInventoryOperations.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     await this.flushPersistence(true);
   }
@@ -298,6 +394,126 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     this.updateZombies(elapsedMs / 1000, Date.now());
 
     this.state.tick += 1;
+  }
+
+  private initializePlayerInventory(
+    player: PlayerState,
+    persistedSlots: readonly PersistedInventorySlot[] = [],
+  ): void {
+    player.inventorySlots.splice(0, player.inventorySlots.length);
+    const restored = emptyInventorySlots();
+    persistedSlots.forEach((persistedSlot) => {
+      if (
+        Number.isInteger(persistedSlot.index)
+        && persistedSlot.index >= 0
+        && persistedSlot.index < INVENTORY_SLOT_COUNT
+        && isItemId(persistedSlot.itemId)
+      ) {
+        const slot = restored[persistedSlot.index];
+        if (slot) {
+          slot.itemId = persistedSlot.itemId;
+          slot.quantity = Math.min(
+            ITEMS[persistedSlot.itemId].maxStack,
+            inventoryCount(persistedSlot.quantity),
+          );
+        }
+      }
+    });
+    restored.forEach((source, index) => {
+      const slot = new InventorySlotState();
+      slot.index = index;
+      slot.itemId = source.itemId;
+      slot.quantity = source.quantity;
+      player.inventorySlots.push(slot);
+    });
+    this.syncInventoryTotals(player);
+  }
+
+  private playerInventory(player: PlayerState): InventorySlotLike[] {
+    return cloneInventorySlots([...player.inventorySlots]);
+  }
+
+  private commitPlayerInventory(player: PlayerState, slots: readonly InventorySlotLike[]): void {
+    player.inventorySlots.forEach((slot, index) => {
+      const source = slots[index];
+      slot.itemId = source?.itemId ?? "";
+      slot.quantity = source?.quantity ?? 0;
+    });
+    this.syncInventoryTotals(player);
+  }
+
+  private syncInventoryTotals(player: PlayerState): void {
+    const totals = inventoryTotals([...player.inventorySlots]);
+    player.scrap = totals.scrap;
+    player.parts = totals.parts;
+    player.food = totals.food;
+    player.medicine = totals.medicine;
+    player.wood = totals.wood;
+    player.stone = totals.stone;
+  }
+
+  private acceptInventoryOperation(sessionId: string, operationId: string): boolean {
+    const operations = this.processedInventoryOperations.get(sessionId);
+    if (!operations || operations.has(operationId)) {
+      return false;
+    }
+    operations.add(operationId);
+    if (operations.size > 256) {
+      const oldest = operations.values().next().value as string | undefined;
+      if (oldest) {
+        operations.delete(oldest);
+      }
+    }
+    return true;
+  }
+
+  private sendInventoryEvent(client: Client, event: InventoryEvent): void {
+    client.send(ServerMessage.INVENTORY_EVENT, event);
+  }
+
+  private handleInventoryMove(client: Client, payload: unknown): void {
+    const input = sanitizeInventoryMoveInput(payload);
+    const player = this.state.players.get(client.sessionId);
+    if (!input || !player || !this.acceptInventoryOperation(client.sessionId, input.operationId)) {
+      return;
+    }
+    const slots = this.playerInventory(player);
+    if (!moveInventoryStack(slots, input.fromIndex, input.toIndex, input.quantity)) {
+      this.sendInventoryEvent(client, { kind: "error", message: "That inventory move is not valid." });
+      return;
+    }
+    this.commitPlayerInventory(player, slots);
+    this.markPersistenceDirty();
+  }
+
+  private handleInventoryDrop(client: Client, payload: unknown): void {
+    const input = sanitizeInventoryDropInput(payload);
+    const player = this.state.players.get(client.sessionId);
+    if (!input || !player || !this.acceptInventoryOperation(client.sessionId, input.operationId)) {
+      return;
+    }
+    const slots = this.playerInventory(player);
+    const removed = removeInventoryItemAt(slots, input.slotIndex, input.quantity);
+    if (!removed) {
+      this.sendInventoryEvent(client, { kind: "error", message: "There is nothing to drop." });
+      return;
+    }
+
+    const pickup = new WorldPickupState();
+    pickup.id = `pickup:${player.survivorId}:${input.operationId}`;
+    pickup.itemId = removed.itemId;
+    pickup.quantity = removed.quantity;
+    pickup.x = player.x + Math.cos(player.facing) * 24;
+    pickup.y = player.y + Math.sin(player.facing) * 24;
+    pickup.spaceId = player.spaceId;
+    pickup.droppedBy = player.name;
+    this.state.pickups.set(pickup.id, pickup);
+    this.commitPlayerInventory(player, slots);
+    this.sendInventoryEvent(client, {
+      kind: "success",
+      message: `Dropped ${removed.quantity} ${ITEMS[removed.itemId].name.toLowerCase()}.`,
+    });
+    this.markPersistenceDirty();
   }
 
   private handleFire(client: Client, payload: unknown): void {
@@ -424,13 +640,19 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       }
     });
     if (connectedPlayer) {
-      connectedPlayer.scrap += amount;
+      const slots = this.playerInventory(connectedPlayer);
+      addInventoryItem(slots, "scrap", amount);
+      this.commitPlayerInventory(connectedPlayer, slots);
       return;
     }
 
     const persisted = this.persistedSurvivors.get(survivorId);
     if (persisted) {
-      persisted.inventory.scrap += amount;
+      const slots = cloneInventorySlots(persisted.inventory.slots);
+      addInventoryItem(slots, "scrap", amount);
+      persisted.inventory.slots = slots
+        .map((slot, index) => ({ index, itemId: slot.itemId, quantity: slot.quantity }))
+        .filter((slot) => slot.itemId && slot.quantity > 0);
       persisted.updatedAt = new Date().toISOString();
     }
   }
@@ -601,6 +823,17 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       return;
     }
 
+    const nearbyPickup = [...this.state.pickups.values()]
+      .filter(
+        (pickup) => pickup.spaceId === player.spaceId
+          && distanceBetween(player, pickup) <= 38,
+      )
+      .sort((left, right) => distanceBetween(player, left) - distanceBetween(player, right))[0];
+    if (nearbyPickup) {
+      this.collectPickup(client, player, nearbyPickup);
+      return;
+    }
+
     if (player.spaceId === OVERWORLD_SPACE_ID) {
       const building = BUILDINGS
         .filter(
@@ -704,19 +937,49 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     container: ContainerState,
     definition: SearchableContainerDefinition,
   ): void {
+    if (!this.applyLoot(player, definition.loot)) {
+      this.clearContainerSearch(container);
+      const client = this.clients.find((candidate) => candidate.sessionId === player.id);
+      if (client) {
+        this.sendInventoryEvent(client, { kind: "error", message: "Your field pack is full." });
+      }
+      return;
+    }
     container.opened = true;
     container.searchedBy = player.name;
     player.activeSearchId = "";
-    this.applyLoot(player, definition.loot);
     this.clearContainerSearch(container);
     this.markPersistenceDirty();
   }
 
-  private applyLoot(player: PlayerState, loot: Readonly<Partial<Record<LootItemId, number>>>): void {
-    player.scrap += loot.scrap ?? 0;
-    player.parts += loot.parts ?? 0;
-    player.food += loot.food ?? 0;
-    player.medicine += loot.medicine ?? 0;
+  private applyLoot(
+    player: PlayerState,
+    loot: Readonly<Partial<Record<LootItemId, number>>>,
+  ): boolean {
+    const slots = this.playerInventory(player);
+    if (!addInventoryBundle(slots, loot as InventoryBundle)) {
+      return false;
+    }
+    this.commitPlayerInventory(player, slots);
+    return true;
+  }
+
+  private collectPickup(client: Client, player: PlayerState, pickup: WorldPickupState): void {
+    if (!isItemId(pickup.itemId)) {
+      return;
+    }
+    const slots = this.playerInventory(player);
+    if (addInventoryItem(slots, pickup.itemId, pickup.quantity) !== pickup.quantity) {
+      this.sendInventoryEvent(client, { kind: "error", message: "Your field pack is full." });
+      return;
+    }
+    this.commitPlayerInventory(player, slots);
+    this.state.pickups.delete(pickup.id);
+    this.sendInventoryEvent(client, {
+      kind: "success",
+      message: `Picked up ${pickup.quantity} ${ITEMS[pickup.itemId].name.toLowerCase()}.`,
+    });
+    this.markPersistenceDirty();
   }
 
   private cancelSearch(sessionId: string): void {
@@ -774,18 +1037,18 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       : OVERWORLD_SPACE_ID;
     player.maxHealth = PLAYER_MAX_HEALTH;
     player.health = Math.max(1, Math.min(player.maxHealth, inventoryCount(persisted.health)));
-    player.scrap = inventoryCount(persisted.inventory.scrap);
-    player.parts = inventoryCount(persisted.inventory.parts);
-    player.food = inventoryCount(persisted.inventory.food);
-    player.medicine = inventoryCount(persisted.inventory.medicine);
+    this.initializePlayerInventory(player, persisted.inventory.slots);
   }
 
   private captureSurvivor(player: PlayerState): void {
     const inventory: PersistedInventory = {
-      scrap: player.scrap,
-      parts: player.parts,
-      food: player.food,
-      medicine: player.medicine,
+      slots: [...player.inventorySlots]
+        .filter((slot) => isItemId(slot.itemId) && slot.quantity > 0)
+        .map((slot) => ({
+          index: slot.index,
+          itemId: slot.itemId,
+          quantity: slot.quantity,
+        })),
     };
     this.persistedSurvivors.set(player.survivorId, {
       survivorId: player.survivorId,
@@ -824,6 +1087,18 @@ export class WorldRoom extends Room<{ state: WorldState }> {
         contributions: ledger ? Object.fromEntries(ledger.entries()) : {},
       };
     });
+    const pickups: PersistedWorld["pickups"] = {};
+    this.state.pickups.forEach((pickup) => {
+      pickups[pickup.id] = {
+        id: pickup.id,
+        itemId: pickup.itemId,
+        quantity: pickup.quantity,
+        x: pickup.x,
+        y: pickup.y,
+        spaceId: pickup.spaceId,
+        droppedBy: pickup.droppedBy,
+      };
+    });
 
     return {
       worldId: this.state.worldId,
@@ -831,6 +1106,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       survivors,
       containers,
       zombies,
+      pickups,
       updatedAt: new Date().toISOString(),
     };
   }

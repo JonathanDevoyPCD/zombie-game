@@ -1,8 +1,10 @@
 import { BIOME_IDS } from "@last-survivor/content";
 import { describe, expect, it } from "vitest";
 import {
+  CHUNK_SIZE,
   CHUNK_TILES,
   generateChunk,
+  generateChunkProps,
   sampleTile,
   worldToChunk,
 } from "../src/index";
@@ -35,5 +37,18 @@ describe("BiomeGen", () => {
   it("uses floor division for negative world coordinates", () => {
     expect(worldToChunk(-1)).toBe(-1);
   });
-});
 
+  it("places deterministic ambient props inside their chunk", () => {
+    const first = generateChunkProps("prop-seed", -2, 3);
+    expect(generateChunkProps("prop-seed", -2, 3)).toEqual(first);
+    expect(first.length).toBeGreaterThan(0);
+    first.forEach((prop) => {
+      expect(prop.x).toBeGreaterThanOrEqual(-2 * CHUNK_SIZE);
+      expect(prop.x).toBeLessThan(-1 * CHUNK_SIZE);
+      expect(prop.y).toBeGreaterThanOrEqual(3 * CHUNK_SIZE);
+      expect(prop.y).toBeLessThan(4 * CHUNK_SIZE);
+      expect(prop.variant).toBeGreaterThanOrEqual(0);
+      expect(prop.variant).toBeLessThan(10);
+    });
+  });
+});
