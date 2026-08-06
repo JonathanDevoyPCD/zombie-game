@@ -5,6 +5,7 @@ export const ITEM_IDS = [
   "parts",
   "food",
   "medicine",
+  "water",
   "wood",
   "stone",
 ] as const;
@@ -21,9 +22,10 @@ export interface ItemDefinition {
 
 export const ITEMS: Readonly<Record<ItemId, ItemDefinition>> = {
   scrap: { id: "scrap", name: "Scrap", category: "resource", maxStack: 999 },
-  parts: { id: "parts", name: "Parts", category: "resource", maxStack: 999 },
+  parts: { id: "parts", name: "Iron fittings", category: "resource", maxStack: 999 },
   food: { id: "food", name: "Food", category: "consumable", maxStack: 20 },
-  medicine: { id: "medicine", name: "Medicine", category: "consumable", maxStack: 20 },
+  medicine: { id: "medicine", name: "Remedy", category: "consumable", maxStack: 20 },
+  water: { id: "water", name: "Fresh water", category: "consumable", maxStack: 20 },
   wood: { id: "wood", name: "Wood", category: "resource", maxStack: 999 },
   stone: { id: "stone", name: "Stone", category: "resource", maxStack: 999 },
 };
@@ -31,4 +33,3 @@ export const ITEMS: Readonly<Record<ItemId, ItemDefinition>> = {
 export function isItemId(value: unknown): value is ItemId {
   return typeof value === "string" && ITEM_IDS.includes(value as ItemId);
 }
-

@@ -64,6 +64,8 @@ export interface BuildingInstanceDefinition {
   prefabId: string;
   exteriorPosition: WorldPoint;
   interiorSpaceId: string;
+  spriteId?: string;
+  displayWidth?: number;
 }
 
 export interface ResolvedBuildingDefinition {
@@ -72,6 +74,7 @@ export interface ResolvedBuildingDefinition {
   prefabId: string;
   exterior: {
     position: WorldPoint;
+    spriteId: string;
     displayWidth: number;
     collider: WorldRect;
     entrance: WorldPoint;
@@ -106,7 +109,7 @@ const SUMMER_HOUSE_CONTAINER_PREFABS: readonly SearchableContainerPrefabDefiniti
   },
   {
     key: "cupboard:01",
-    name: "Kitchen cupboard",
+    name: "Larder",
     position: { x: 111, y: -98 },
     collider: { x: 78, y: -112, width: 66, height: 28 },
     interactionRadius: 42,
@@ -149,18 +152,44 @@ export const BUILDING_PREFABS: Readonly<Record<string, BuildingPrefabDefinition>
 export const BUILDING_INSTANCES: readonly BuildingInstanceDefinition[] = [
   {
     id: "house:48",
-    name: "House 48",
+    name: "Wayfarer's Cottage",
     prefabId: SUMMER_HOUSE_PREFAB_ID,
-    exteriorPosition: { x: 300, y: 80 },
+    exteriorPosition: { x: -330, y: -180 },
     interiorSpaceId: HOUSE_48_INTERIOR_SPACE_ID,
+    spriteId: "grassland:0",
+    displayWidth: 210,
   },
   {
     id: "house:73",
-    name: "House 73",
+    name: "Miller's Cottage",
     prefabId: SUMMER_HOUSE_PREFAB_ID,
-    exteriorPosition: { x: -360, y: 180 },
+    exteriorPosition: { x: 330, y: -180 },
     interiorSpaceId: HOUSE_73_INTERIOR_SPACE_ID,
+    spriteId: "grassland:1",
+    displayWidth: 210,
   },
+  { id: "town:hearthwick:home:03", name: "Baker's Cottage", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -930, y: -180 }, interiorSpaceId: "interior:town:hearthwick:home:03", spriteId: "grassland:2", displayWidth: 215 },
+  { id: "town:hearthwick:home:04", name: "Weaver's Cottage", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -630, y: -180 }, interiorSpaceId: "interior:town:hearthwick:home:04", spriteId: "grassland:3", displayWidth: 205 },
+  { id: "town:hearthwick:home:05", name: "Cooper's Cottage", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 630, y: -180 }, interiorSpaceId: "interior:town:hearthwick:home:05", spriteId: "grassland:4", displayWidth: 215 },
+  { id: "town:hearthwick:home:06", name: "Apothecary's Cottage", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 930, y: -180 }, interiorSpaceId: "interior:town:hearthwick:home:06", spriteId: "grassland:5", displayWidth: 220 },
+  { id: "town:hearthwick:home:07", name: "Blacksmith's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -930, y: 520 }, interiorSpaceId: "interior:town:hearthwick:home:07", spriteId: "grassland:6", displayWidth: 225 },
+  { id: "town:hearthwick:home:08", name: "Carpenter's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -630, y: 520 }, interiorSpaceId: "interior:town:hearthwick:home:08", spriteId: "grassland:7", displayWidth: 215 },
+  { id: "town:hearthwick:home:09", name: "Hearthwick Guildhall", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -330, y: 520 }, interiorSpaceId: "interior:town:hearthwick:home:09", spriteId: "grassland:8", displayWidth: 230 },
+  { id: "town:hearthwick:home:10", name: "The Lantern Inn", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 330, y: 520 }, interiorSpaceId: "interior:town:hearthwick:home:10", spriteId: "grassland:9", displayWidth: 230 },
+  { id: "town:hearthwick:home:11", name: "Tailor's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 630, y: 520 }, interiorSpaceId: "interior:town:hearthwick:home:11", spriteId: "grassland:10", displayWidth: 210 },
+  { id: "town:hearthwick:home:12", name: "Chandler's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 930, y: 520 }, interiorSpaceId: "interior:town:hearthwick:home:12", spriteId: "grassland:11", displayWidth: 215 },
+  { id: "town:hearthwick:home:13", name: "Dyer's Workshop", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -700, y: -520 }, interiorSpaceId: "interior:town:hearthwick:home:13", spriteId: "grassland:12", displayWidth: 210 },
+  { id: "town:hearthwick:home:14", name: "Scribe's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -700, y: -850 }, interiorSpaceId: "interior:town:hearthwick:home:14", spriteId: "grassland:13", displayWidth: 205 },
+  { id: "town:hearthwick:home:15", name: "Mason's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -700, y: 850 }, interiorSpaceId: "interior:town:hearthwick:home:15", spriteId: "grassland:14", displayWidth: 220 },
+  { id: "town:hearthwick:home:16", name: "Brewer's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -700, y: 1150 }, interiorSpaceId: "interior:town:hearthwick:home:16", spriteId: "grassland:15", displayWidth: 215 },
+  { id: "town:hearthwick:home:17", name: "Merchant's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 700, y: -520 }, interiorSpaceId: "interior:town:hearthwick:home:17", spriteId: "grassland:16", displayWidth: 220 },
+  { id: "town:hearthwick:home:18", name: "Healer's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 700, y: -850 }, interiorSpaceId: "interior:town:hearthwick:home:18", spriteId: "grassland:17", displayWidth: 210 },
+  { id: "town:hearthwick:home:19", name: "Cobbler's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 700, y: 850 }, interiorSpaceId: "interior:town:hearthwick:home:19", spriteId: "grassland:18", displayWidth: 205 },
+  { id: "town:hearthwick:home:20", name: "Fletcher's House", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 700, y: 1150 }, interiorSpaceId: "interior:town:hearthwick:home:20", spriteId: "grassland:19", displayWidth: 215 },
+  { id: "town:hearthwick:farm:01", name: "Northwest Farmhouse", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -1180, y: -700 }, interiorSpaceId: "interior:town:hearthwick:farm:01", spriteId: "grassland:20", displayWidth: 225 },
+  { id: "town:hearthwick:farm:02", name: "Northeast Farmhouse", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 1180, y: -700 }, interiorSpaceId: "interior:town:hearthwick:farm:02", spriteId: "grassland:21", displayWidth: 225 },
+  { id: "town:hearthwick:farm:03", name: "Southwest Farmhouse", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: -1180, y: 1080 }, interiorSpaceId: "interior:town:hearthwick:farm:03", spriteId: "grassland:22", displayWidth: 225 },
+  { id: "town:hearthwick:farm:04", name: "Southeast Farmhouse", prefabId: SUMMER_HOUSE_PREFAB_ID, exteriorPosition: { x: 1180, y: 1080 }, interiorSpaceId: "interior:town:hearthwick:farm:04", spriteId: "grassland:23", displayWidth: 225 },
 ] as const;
 
 function translatePoint(point: WorldPoint, offset: WorldPoint): WorldPoint {
@@ -179,6 +208,18 @@ export function resolveBuildingInstance(
     throw new Error(`Unknown building prefab: ${instance.prefabId}`);
   }
 
+  const exteriorScale = (instance.displayWidth ?? prefab.exterior.displayWidth)
+    / prefab.exterior.displayWidth;
+  const scaleExteriorPoint = (point: WorldPoint): WorldPoint => ({
+    x: point.x * exteriorScale,
+    y: point.y * exteriorScale,
+  });
+  const scaleExteriorRect = (rect: WorldRect): WorldRect => ({
+    x: rect.x * exteriorScale,
+    y: rect.y * exteriorScale,
+    width: rect.width * exteriorScale,
+    height: rect.height * exteriorScale,
+  });
   const containers = prefab.interior.containers.map((container) => ({
     id: `${instance.id}:${container.key}`,
     buildingInstanceId: instance.id,
@@ -198,11 +239,15 @@ export function resolveBuildingInstance(
     prefabId: instance.prefabId,
     exterior: {
       position: { ...instance.exteriorPosition },
-      displayWidth: prefab.exterior.displayWidth,
-      collider: translateRect(prefab.exterior.collider, instance.exteriorPosition),
-      entrance: translatePoint(prefab.exterior.entrance, instance.exteriorPosition),
-      returnPosition: translatePoint(prefab.exterior.returnPosition, instance.exteriorPosition),
-      interactionRadius: prefab.exterior.interactionRadius,
+      spriteId: instance.spriteId ?? "grassland:0",
+      displayWidth: instance.displayWidth ?? prefab.exterior.displayWidth,
+      collider: translateRect(scaleExteriorRect(prefab.exterior.collider), instance.exteriorPosition),
+      entrance: translatePoint(scaleExteriorPoint(prefab.exterior.entrance), instance.exteriorPosition),
+      returnPosition: translatePoint(
+        scaleExteriorPoint(prefab.exterior.returnPosition),
+        instance.exteriorPosition,
+      ),
+      interactionRadius: prefab.exterior.interactionRadius * exteriorScale,
     },
     interior: {
       spaceId: instance.interiorSpaceId,
@@ -240,14 +285,20 @@ export function buildingContainerById(
 export function movementEnvironmentForSpace(spaceId: string): MovementEnvironment {
   const building = buildingByInteriorSpace(spaceId);
   if (building) {
-    return {
-      bounds: building.interior.bounds,
-      colliders: building.interior.containers.map((container) => container.collider),
-    };
+    return movementEnvironmentForBuilding(building);
   }
 
   return {
     colliders: BUILDINGS.map((candidate) => candidate.exterior.collider),
+  };
+}
+
+export function movementEnvironmentForBuilding(
+  building: ResolvedBuildingDefinition,
+): MovementEnvironment {
+  return {
+    bounds: building.interior.bounds,
+    colliders: building.interior.containers.map((container) => container.collider),
   };
 }
 

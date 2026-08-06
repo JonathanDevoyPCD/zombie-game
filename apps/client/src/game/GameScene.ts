@@ -1,5 +1,4 @@
 import {
-  ALL_BUILDING_CONTAINERS,
   BIOMES,
   BUILDABLES,
   BUILDINGS,
@@ -7,18 +6,23 @@ import {
   OVERWORLD_SPACE_ID,
   PLAYER_COLLISION_RADIUS,
   STARTING_SAFE_ZONE_RADIUS,
+  STARTING_TOWN_NAME,
+  STARTING_TOWN_PLAZAS,
+  STARTING_TOWN_PROP_COLLIDERS,
+  STARTING_TOWN_PROPS,
+  STARTING_TOWN_ROADS,
   ZOMBIE_COLLISION_RADIUS,
   buildableCollider,
   buildableCollidersConflict,
-  buildingByInteriorSpace,
-  buildingContainerById,
   isItemId,
   isBuildableId,
   isBuildOrientation,
+  movementEnvironmentForBuilding,
   movementEnvironmentForSpace,
   snapBuildCoordinate,
   type BuildOrientation,
   type ResolvedBuildingDefinition,
+  type TownPropDefinition,
 } from "@last-survivor/content";
 import {
   INPUT_STEP_SECONDS,
@@ -44,8 +48,12 @@ import {
   CHUNK_TILES,
   TILE_SIZE,
   generateChunk,
+  generateChunkBuildings,
   generateChunkProps,
+  generatedBuildingFromInteriorSpace,
   RESOURCE_INTERACTION_RADIUS,
+  RESOURCE_DISPLAY_WIDTHS,
+  resolveGeneratedBuilding,
   resourceCollisionRect,
   sampleTile,
   worldToChunk,
@@ -140,11 +148,12 @@ type VisibleGameObject = Phaser.GameObjects.GameObject & Phaser.GameObjects.Comp
 const INPUT_STEP_MS = INPUT_STEP_SECONDS * 1000;
 const MAX_PREDICTION_STEPS_PER_FRAME = 5;
 const REMOTE_INTERPOLATION_RATE = 14;
-const HOUSE_TEXTURE_KEY = "house-48-exterior";
 const CHEST_TEXTURE_KEY = "house-48-chest";
 const WOOD_WALL_HORIZONTAL_TEXTURE_KEY = "structure:wood-wall:horizontal";
 const WOOD_WALL_VERTICAL_TEXTURE_KEY = "structure:wood-wall:vertical";
 const itemTextureKey = (itemId: string): string => `item:${itemId}`;
+const houseTextureKey = (spriteId: string): string => `house:${spriteId}`;
+const townTextureKey = (spriteId: string): string => `town:${spriteId}`;
 const PLAYER_TEXTURE_KEYS = {
   idle: "player:raider-1:idle",
   walk: "player:raider-1:walk",
@@ -205,7 +214,12 @@ export class GameScene extends Phaser.Scene {
   private readonly structureVisuals = new Map<string, StructureVisual>();
   private readonly resources = new Map<string, ResourceNodeSnapshot>();
   private readonly resourceVisuals = new Map<string, ResourceVisual>();
-  private readonly exteriorBuildings: Phaser.GameObjects.Image[] = [];
+  private readonly worldBuildings = new Map(
+    BUILDINGS.map((building) => [building.id, building] as const),
+  );
+  private readonly staticBuildingIds = new Set(BUILDINGS.map((building) => building.id));
+  private readonly exteriorBuildings = new Map<string, Phaser.GameObjects.Image>();
+  private readonly townPropVisuals = new Map<string, Phaser.GameObjects.Image>();
   private readonly interiorObjectsBySpace = new Map<string, VisibleGameObject[]>();
   private cursors!: Record<"up" | "down" | "left" | "right", Phaser.Input.Keyboard.Key>;
   private interactKey!: Phaser.Input.Keyboard.Key;
@@ -215,6 +229,7 @@ export class GameScene extends Phaser.Scene {
   private sprintKey!: Phaser.Input.Keyboard.Key;
   private flashlightKey!: Phaser.Input.Keyboard.Key;
   private safeZoneVisual!: Phaser.GameObjects.Graphics;
+  private townRoadVisual!: Phaser.GameObjects.Graphics;
   private localSessionId = "";
   private currentSpaceId = OVERWORLD_SPACE_ID;
   private transitionTarget = "";
@@ -254,7 +269,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload(): void {
-    this.load.image(HOUSE_TEXTURE_KEY, SPRITE_ASSETS.structures.regularHouse);
     this.load.image(CHEST_TEXTURE_KEY, SPRITE_ASSETS.containers.chest);
     this.load.image(WOOD_WALL_HORIZONTAL_TEXTURE_KEY, SPRITE_ASSETS.structures.woodWallHorizontal);
     this.load.image(WOOD_WALL_VERTICAL_TEXTURE_KEY, SPRITE_ASSETS.structures.woodWallVertical);
@@ -272,6 +286,14 @@ export class GameScene extends Phaser.Scene {
     });
     SPRITE_ASSETS.terrain.resources.stones.forEach((assetUrl, index) => {
       this.load.image(`resource:stone:${index}`, assetUrl);
+    });
+    Object.entries(SPRITE_ASSETS.buildings.houses).forEach(([biome, houses]) => {
+      houses.forEach((assetUrl, index) => {
+        this.load.image(houseTextureKey(`${biome}:${index}`), assetUrl);
+      });
+    });
+    Object.entries(SPRITE_ASSETS.town).forEach(([spriteId, assetUrl]) => {
+      this.load.image(townTextureKey(spriteId), assetUrl);
     });
     Object.entries(SPRITE_ASSETS.players.raider1).forEach(([action, assetUrl]) => {
       this.load.spritesheet(PLAYER_TEXTURE_KEYS[action as keyof typeof PLAYER_TEXTURE_KEYS], assetUrl, {
@@ -445,19 +467,113 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createExteriorObjects(): void {
+    this.createStartingTownRoads();
     this.safeZoneVisual = this.add.graphics().setDepth(-9000);
-    this.safeZoneVisual.fillStyle(0xc6d67a, 0.1);
+    this.safeZoneVisual.fillStyle(0xc6d67a, 0.025);
     this.safeZoneVisual.fillCircle(0, 0, STARTING_SAFE_ZONE_RADIUS);
-    this.safeZoneVisual.lineStyle(2, 0xdce69a, 0.36);
+    this.safeZoneVisual.lineStyle(2, 0xdce69a, 0.12);
     this.safeZoneVisual.strokeCircle(0, 0, STARTING_SAFE_ZONE_RADIUS);
-    BUILDINGS.forEach((building) => {
-      const image = this.add
-        .image(building.exterior.position.x, building.exterior.position.y, HOUSE_TEXTURE_KEY)
-        .setOrigin(0.5, 1)
-        .setDepth(building.exterior.position.y);
-      image.setScale(building.exterior.displayWidth / image.width);
-      this.exteriorBuildings.push(image);
+    BUILDINGS.forEach((building) => this.upsertExteriorBuilding(building));
+    STARTING_TOWN_PROPS.forEach((prop) => this.createTownProp(prop));
+  }
+
+  private createStartingTownRoads(): void {
+    const roads = this.add.graphics().setDepth(-9500);
+    const drawRoadLayer = (widthOffset: number, color: number, alpha: number): void => {
+      STARTING_TOWN_ROADS.forEach((road) => {
+        const width = road.width + widthOffset;
+        roads.lineStyle(width, color, alpha);
+        road.points.slice(1).forEach((point, index) => {
+          const previous = road.points[index]!;
+          roads.lineBetween(previous.x, previous.y, point.x, point.y);
+        });
+        roads.fillStyle(color, alpha);
+        road.points.forEach((point) => roads.fillCircle(point.x, point.y, width / 2));
+      });
+    };
+
+    STARTING_TOWN_PLAZAS.forEach((plaza) => {
+      roads.fillStyle(0x6c5539, 0.9);
+      roads.fillCircle(plaza.x, plaza.y, plaza.radius + 12);
     });
+    drawRoadLayer(18, 0x6c5539, 0.92);
+    STARTING_TOWN_PLAZAS.forEach((plaza) => {
+      roads.fillStyle(0xc89b61, 1);
+      roads.fillCircle(plaza.x, plaza.y, plaza.radius);
+      roads.lineStyle(3, 0xe0ba7e, 0.42);
+      roads.strokeCircle(plaza.x, plaza.y, plaza.radius - 8);
+    });
+    drawRoadLayer(0, 0xc89b61, 1);
+    drawRoadLayer(-28, 0xe0b475, 0.16);
+    this.townRoadVisual = roads;
+  }
+
+  private createTownProp(prop: TownPropDefinition): void {
+    const image = this.add
+      .image(prop.position.x, prop.position.y, townTextureKey(prop.spriteId))
+      .setOrigin(0.5, prop.originY)
+      .setDepth(prop.position.y + 0.01)
+      .setVisible(this.currentSpaceId === OVERWORLD_SPACE_ID);
+    image.setScale(prop.displayWidth / image.width);
+    this.townPropVisuals.set(prop.id, image);
+  }
+
+  private upsertExteriorBuilding(building: ResolvedBuildingDefinition): void {
+    const existing = this.exteriorBuildings.get(building.id);
+    if (existing) {
+      existing
+        .setPosition(building.exterior.position.x, building.exterior.position.y)
+        .setDepth(building.exterior.position.y)
+        .setVisible(this.currentSpaceId === OVERWORLD_SPACE_ID);
+      return;
+    }
+    const image = this.add
+      .image(
+        building.exterior.position.x,
+        building.exterior.position.y,
+        houseTextureKey(building.exterior.spriteId),
+      )
+      .setOrigin(0.5, 1)
+      .setDepth(building.exterior.position.y)
+      .setVisible(this.currentSpaceId === OVERWORLD_SPACE_ID);
+    image.setScale(building.exterior.displayWidth / image.width);
+    this.exteriorBuildings.set(building.id, image);
+  }
+
+  private allBuildings(): ResolvedBuildingDefinition[] {
+    return [...this.worldBuildings.values()];
+  }
+
+  private buildingForSpace(spaceId: string): ResolvedBuildingDefinition | undefined {
+    return [...this.worldBuildings.values()].find(
+      (building) => building.interior.spaceId === spaceId,
+    );
+  }
+
+  private containerDefinition(containerId: string) {
+    return this.allBuildings()
+      .flatMap((building) => building.interior.containers)
+      .find((container) => container.id === containerId);
+  }
+
+  private ensureBuildingForSpace(spaceId: string): ResolvedBuildingDefinition | undefined {
+    const known = this.buildingForSpace(spaceId);
+    if (known) {
+      return known;
+    }
+    const generated = generatedBuildingFromInteriorSpace(this.worldSeed, spaceId);
+    if (!generated) {
+      return undefined;
+    }
+    this.worldBuildings.set(generated.id, generated);
+    this.ensureBuildingInterior(generated);
+    return generated;
+  }
+
+  private ensureBuildingInterior(building: ResolvedBuildingDefinition): void {
+    if (!this.interiorObjectsBySpace.has(building.interior.spaceId)) {
+      this.createBuildingInterior(building);
+    }
   }
 
   private createBuildPreview(): void {
@@ -514,8 +630,11 @@ export class GameScene extends Phaser.Scene {
     const hasWood = (this.previousInventory?.wood ?? 0) >= (definition.cost.wood ?? 0);
     const withinRange = distanceBetween(localPlayer.container, { x, y })
       <= definition.maximumPlacementRange;
-    const overlapsBuilding = BUILDINGS.some((building) => (
+    const overlapsBuilding = this.allBuildings().some((building) => (
       rectanglesOverlap(collider, building.exterior.collider, 8)
+    ));
+    const overlapsTownProp = STARTING_TOWN_PROP_COLLIDERS.some((propCollider) => (
+      rectanglesOverlap(collider, propCollider, 4)
     ));
     const overlapsStructure = [...this.structures.values()].some((structure) => {
       if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
@@ -547,6 +666,7 @@ export class GameScene extends Phaser.Scene {
     this.buildPreviewValid = hasWood
       && withinRange
       && !overlapsBuilding
+      && !overlapsTownProp
       && !overlapsStructure
       && !overlapsPlayer
       && !overlapsZombie
@@ -557,6 +677,7 @@ export class GameScene extends Phaser.Scene {
       this.buildInvalidReason = "Move closer to place this wall.";
     } else if (
       overlapsBuilding
+      || overlapsTownProp
       || overlapsStructure
       || overlapsPlayer
       || overlapsZombie
@@ -770,7 +891,7 @@ export class GameScene extends Phaser.Scene {
     );
 
     const cupboardLabel = this.add
-      .text(cupboardDefinition.position.x, cupboardDefinition.position.y - 25, "CUPBOARD", {
+      .text(cupboardDefinition.position.x, cupboardDefinition.position.y - 25, "LARDER", {
         color: "#d8c98e",
         fontFamily: "Arial, sans-serif",
         fontSize: "8px",
@@ -911,7 +1032,7 @@ export class GameScene extends Phaser.Scene {
           y: zombie.container.y,
           kind: "zombie" as const,
         })),
-      ...BUILDINGS.map((building) => ({
+      ...this.allBuildings().map((building) => ({
         x: building.exterior.position.x,
         y: building.exterior.position.y,
         kind: "building" as const,
@@ -1046,10 +1167,17 @@ export class GameScene extends Phaser.Scene {
         Math.floor(localX / TILE_SIZE),
         Math.floor(localY / TILE_SIZE),
       );
-      updateWorldReadout(this.worldId, tile.biome, this.playersInCurrentSpace());
-      updateSignalReadout(BIOMES[tile.biome].name, Math.hypot(localX, localY) / 10);
+      const areaName = Math.hypot(localX, localY) <= STARTING_SAFE_ZONE_RADIUS
+        ? STARTING_TOWN_NAME
+        : BIOMES[tile.biome].name;
+      if (areaName === STARTING_TOWN_NAME) {
+        updateAreaReadout(this.worldId, areaName, this.playersInCurrentSpace());
+      } else {
+        updateWorldReadout(this.worldId, tile.biome, this.playersInCurrentSpace());
+      }
+      updateSignalReadout(areaName, Math.hypot(localX, localY) / 10);
     } else {
-      const building = buildingByInteriorSpace(this.currentSpaceId);
+      const building = this.buildingForSpace(this.currentSpaceId);
       updateAreaReadout(
         this.worldId,
         building?.name ?? "Unknown interior",
@@ -1072,6 +1200,14 @@ export class GameScene extends Phaser.Scene {
       gameElement.dataset.visibleZombies = String(
         [...this.zombieVisuals.values()].filter((zombie) => zombie.container.visible).length,
       );
+      gameElement.dataset.buildings = JSON.stringify(this.allBuildings().map((building) => ({
+        id: building.id,
+        name: building.name,
+        x: building.exterior.position.x,
+        y: building.exterior.position.y,
+        spriteId: building.exterior.spriteId,
+        spaceId: building.interior.spaceId,
+      })));
     }
   }
 
@@ -1122,7 +1258,18 @@ export class GameScene extends Phaser.Scene {
         }
         return;
       }
-      const nearbyBuilding = BUILDINGS
+      const nearbyTownProp = STARTING_TOWN_PROPS
+        .filter((prop) => prop.interaction
+          && distanceBetween(playerPosition, prop.position) <= prop.interaction.radius)
+        .sort(
+          (left, right) => distanceBetween(playerPosition, left.position)
+            - distanceBetween(playerPosition, right.position),
+        )[0];
+      if (nearbyTownProp?.interaction?.kind === "draw-water") {
+        showInteractionPrompt(`Draw water from ${nearbyTownProp.name.toLowerCase()}`);
+        return;
+      }
+      const nearbyBuilding = this.allBuildings()
         .filter(
           (building) => distanceBetween(playerPosition, building.exterior.entrance)
             <= building.exterior.interactionRadius,
@@ -1139,14 +1286,14 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const building = buildingByInteriorSpace(this.currentSpaceId);
+    const building = this.buildingForSpace(this.currentSpaceId);
     if (!building) {
       hideInteractionPrompt();
       return;
     }
 
     if (localPlayer?.activeSearchId) {
-      const definition = buildingContainerById(localPlayer.activeSearchId);
+      const definition = this.containerDefinition(localPlayer.activeSearchId);
       showInteractionPrompt(`Cancel searching ${definition?.name.toLowerCase() ?? "container"}`);
       return;
     }
@@ -1273,6 +1420,13 @@ export class GameScene extends Phaser.Scene {
     }
 
     const current = snapshot.players.find((player) => player.id === snapshot.sessionId);
+    if (current && current.spaceId !== OVERWORLD_SPACE_ID) {
+      const building = this.ensureBuildingForSpace(current.spaceId);
+      if (building) {
+        this.ensureBuildingInterior(building);
+        this.updateContainerPresentation();
+      }
+    }
     const localSpaceChanged = Boolean(current && current.spaceId !== this.currentSpaceId);
     if (localSpaceChanged) {
       this.pendingInputs = [];
@@ -1525,12 +1679,12 @@ export class GameScene extends Phaser.Scene {
     const texture = `resource:${resource.kind}:${resource.variant}`;
     const image = this.add.image(resource.x, resource.y, texture);
     if (resource.kind === "tree") {
-      const widths = [92, 82, 66];
-      const width = widths[resource.variant] ?? 76;
+      const width = RESOURCE_DISPLAY_WIDTHS.tree[resource.variant]
+        ?? RESOURCE_DISPLAY_WIDTHS.tree[1]!;
       image.setOrigin(0.5, 0.9).setDisplaySize(width, width * image.height / image.width);
     } else {
-      const widths = [34, 34, 42];
-      const width = widths[resource.variant] ?? 34;
+      const width = RESOURCE_DISPLAY_WIDTHS.stone[resource.variant]
+        ?? RESOURCE_DISPLAY_WIDTHS.stone[0]!;
       image.setOrigin(0.5, 0.76).setDisplaySize(width, width * image.height / image.width);
     }
     image
@@ -1540,11 +1694,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private movementEnvironment(spaceId: string) {
-    const base = movementEnvironmentForSpace(spaceId);
     if (spaceId !== OVERWORLD_SPACE_ID) {
-      return base;
+      const building = this.buildingForSpace(spaceId);
+      return building
+        ? movementEnvironmentForBuilding(building)
+        : movementEnvironmentForSpace(spaceId);
     }
-    const colliders = [...base.colliders];
+    const colliders = [
+      ...this.allBuildings().map((building) => building.exterior.collider),
+      ...STARTING_TOWN_PROP_COLLIDERS,
+    ];
     this.structures.forEach((structure) => {
       if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
         return;
@@ -1561,7 +1720,7 @@ export class GameScene extends Phaser.Scene {
         colliders.push(resourceCollisionRect(resource.kind, resource.x, resource.y));
       }
     });
-    return { ...base, colliders };
+    return { colliders };
   }
 
   private predictLocalInput(input: MovementInput): void {
@@ -1624,6 +1783,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.transitionTarget = spaceId;
+    if (spaceId !== OVERWORLD_SPACE_ID) {
+      const building = this.ensureBuildingForSpace(spaceId);
+      if (building) {
+        this.ensureBuildingInterior(building);
+      }
+    }
     this.isTransitioning = true;
     hideInteractionPrompt();
     this.cameras.main.fadeOut(140, 8, 12, 10);
@@ -1641,6 +1806,8 @@ export class GameScene extends Phaser.Scene {
   private applySpacePresentation(): void {
     const showExterior = this.currentSpaceId === OVERWORLD_SPACE_ID;
     this.exteriorBuildings.forEach((building) => building.setVisible(showExterior));
+    this.townRoadVisual.setVisible(showExterior);
+    this.townPropVisuals.forEach((prop) => prop.setVisible(showExterior));
     this.safeZoneVisual.setVisible(showExterior);
     this.terrainChunks.forEach((image) => image.setVisible(showExterior));
     this.ambientProps.forEach((image) => image.setVisible(showExterior));
@@ -1673,7 +1840,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateContainerPresentation(): void {
-    ALL_BUILDING_CONTAINERS.forEach((definition) => {
+    this.allBuildings().flatMap((building) => building.interior.containers).forEach((definition) => {
       const state = this.containers.get(definition.id);
       const visual = this.containerVisuals.get(definition.id);
       if (!visual) {
@@ -1697,6 +1864,7 @@ export class GameScene extends Phaser.Scene {
         parts: "parts",
         food: "food",
         medicine: "medicine",
+        water: "water",
         wood: "wood",
         stone: "stone",
       } as const;
@@ -1731,6 +1899,18 @@ export class GameScene extends Phaser.Scene {
     this.renderedChunkY = centerChunkY;
     const activeTextureKeys = new Set<string>();
     const activePropIds = new Set<string>();
+    const activeGeneratedBuildingIds = new Set<string>();
+
+    for (let chunkY = centerChunkY - 1; chunkY <= centerChunkY + 1; chunkY += 1) {
+      for (let chunkX = centerChunkX - 1; chunkX <= centerChunkX + 1; chunkX += 1) {
+        generateChunkBuildings(this.worldSeed, chunkX, chunkY).forEach((placement) => {
+          const building = resolveGeneratedBuilding(placement);
+          activeGeneratedBuildingIds.add(building.id);
+          this.worldBuildings.set(building.id, building);
+          this.upsertExteriorBuilding(building);
+        });
+      }
+    }
 
     for (let chunkY = centerChunkY - 1; chunkY <= centerChunkY + 1; chunkY += 1) {
       for (let chunkX = centerChunkX - 1; chunkX <= centerChunkX + 1; chunkX += 1) {
@@ -1753,7 +1933,7 @@ export class GameScene extends Phaser.Scene {
         }
 
         generateChunkProps(this.worldSeed, chunkX, chunkY).forEach((prop) => {
-          const overlapsBuilding = BUILDINGS.some((building) => {
+          const overlapsBuilding = this.allBuildings().some((building) => {
             const collider = building.exterior.collider;
             return prop.x >= collider.x - 32
               && prop.x <= collider.x + collider.width + 32
@@ -1791,6 +1971,27 @@ export class GameScene extends Phaser.Scene {
         image.destroy();
         this.ambientProps.delete(propId);
       }
+    });
+    this.exteriorBuildings.forEach((image, buildingId) => {
+      if (this.staticBuildingIds.has(buildingId) || activeGeneratedBuildingIds.has(buildingId)) {
+        return;
+      }
+      const building = this.worldBuildings.get(buildingId);
+      if (building?.interior.spaceId === this.currentSpaceId) {
+        return;
+      }
+      image.destroy();
+      this.exteriorBuildings.delete(buildingId);
+      if (building) {
+        building.interior.containers.forEach((container) => {
+          this.containerVisuals.delete(container.id);
+        });
+        this.interiorObjectsBySpace.get(building.interior.spaceId)?.forEach((object) => {
+          object.destroy();
+        });
+        this.interiorObjectsBySpace.delete(building.interior.spaceId);
+      }
+      this.worldBuildings.delete(buildingId);
     });
 
     this.evictUnusedTerrainTextures(activeTextureKeys);
@@ -1859,6 +2060,25 @@ export class GameScene extends Phaser.Scene {
     this.terrainChunks.clear();
     this.ambientProps.forEach((image) => image.destroy());
     this.ambientProps.clear();
+    this.exteriorBuildings.forEach((image, buildingId) => {
+      if (!this.staticBuildingIds.has(buildingId)) {
+        image.destroy();
+        this.exteriorBuildings.delete(buildingId);
+      }
+    });
+    this.worldBuildings.forEach((building, buildingId) => {
+      if (this.staticBuildingIds.has(buildingId)) {
+        return;
+      }
+      this.interiorObjectsBySpace.get(building.interior.spaceId)?.forEach((object) => {
+        object.destroy();
+      });
+      this.interiorObjectsBySpace.delete(building.interior.spaceId);
+      building.interior.containers.forEach((container) => {
+        this.containerVisuals.delete(container.id);
+      });
+      this.worldBuildings.delete(buildingId);
+    });
   }
 
   private terrainTextureKey(chunkX: number, chunkY: number): string {

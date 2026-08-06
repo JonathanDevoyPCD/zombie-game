@@ -28,10 +28,10 @@
       </section>
       <aside class="survival-hud" aria-label="Survivor status">
         <section class="survival-panel signal-panel">
-          <strong>Signal Readout</strong>
+          <strong>Travel Ledger</strong>
           <div>
             <span id="signal-time">Time: Day</span>
-            <span id="signal-district">District: Grasslands</span>
+            <span id="signal-district">Region: Grasslands</span>
             <span id="signal-distance">Camp: 0m</span>
           </div>
         </section>
@@ -52,8 +52,8 @@
         </section>
         <section class="survival-panel weapon-panel">
           <strong>Weapon</strong>
-          <span>Pistol</span>
-          <span>Ready &middot; unlimited ammo</span>
+          <span>Hunting Bow</span>
+          <span>Ready &middot; unlimited arrows</span>
         </section>
         <section class="survival-panel resources-panel">
           <strong>Resources</strong>
@@ -61,14 +61,15 @@
             <span><img id="resource-scrap-icon" alt="" /><b id="inventory-scrap">0</b><small>scrap</small></span>
             <span><img id="resource-wood-icon" alt="" /><b id="inventory-wood">0</b><small>wood</small></span>
             <span><img id="resource-stone-icon" alt="" /><b id="inventory-stone">0</b><small>stone</small></span>
-            <span><img id="resource-parts-icon" alt="" /><b id="inventory-parts">0</b><small>parts</small></span>
+            <span><img id="resource-parts-icon" alt="" /><b id="inventory-parts">0</b><small>fittings</small></span>
             <span><img id="resource-food-icon" alt="" /><b id="inventory-food">0</b><small>food</small></span>
-            <span><img id="resource-medicine-icon" alt="" /><b id="inventory-medicine">0</b><small>med</small></span>
+            <span><img id="resource-medicine-icon" alt="" /><b id="inventory-medicine">0</b><small>remedies</small></span>
+            <span><img id="resource-water-icon" alt="" /><b id="inventory-water">0</b><small>water</small></span>
           </div>
         </section>
         <section class="survival-panel equipment-panel">
           <strong>Equipment</strong>
-          <span>Flashlight <b id="flashlight-status">OFF</b></span>
+          <span>Hand Lantern <b id="flashlight-status">OFF</b></span>
         </section>
         <section class="survival-panel minimap-panel" aria-label="Local minimap">
           <canvas id="minimap" width="144" height="144"></canvas>
@@ -111,7 +112,7 @@
         <strong id="loot-toast-text"></strong>
       </div>
       <div id="combat-toast" class="combat-toast" hidden></div>
-      <div class="controls">WASD MOVE &nbsp; SHIFT SPRINT &nbsp; F LIGHT &nbsp; I PACK &nbsp; B BUILD</div>
+      <div class="controls">WASD MOVE &nbsp; SHIFT SPRINT &nbsp; F LANTERN &nbsp; I PACK &nbsp; B BUILD</div>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

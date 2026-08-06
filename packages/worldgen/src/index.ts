@@ -1,6 +1,12 @@
-import type { BiomeId } from "@last-survivor/content";
+import {
+  SUMMER_HOUSE_PREFAB_ID,
+  STARTING_TOWN_RADIUS,
+  resolveBuildingInstance,
+  type BiomeId,
+  type ResolvedBuildingDefinition,
+} from "@last-survivor/content";
 
-export const WORLD_GENERATOR_VERSION = 1;
+export const WORLD_GENERATOR_VERSION = 4;
 export const CHUNK_TILES = 32;
 export const TILE_SIZE = 32;
 export const CHUNK_SIZE = CHUNK_TILES * TILE_SIZE;
@@ -50,16 +56,44 @@ export interface GeneratedResourceNode {
   y: number;
 }
 
+export type SettlementKind = "town" | "village" | "hamlet" | "farmstead" | "isolated";
+export type HouseSpriteBiome = "grassland" | "tundra" | "badlands";
+
+export interface GeneratedBuildingPlacement {
+  id: string;
+  name: string;
+  settlementId: string;
+  settlementName: string;
+  settlementKind: SettlementKind;
+  spriteBiome: HouseSpriteBiome;
+  spriteVariant: number;
+  x: number;
+  y: number;
+  displayWidth: number;
+  interiorSpaceId: string;
+}
+
+export const HOUSE_VARIANT_COUNTS: Readonly<Record<HouseSpriteBiome, number>> = {
+  grassland: 32,
+  tundra: 32,
+  badlands: 31,
+};
+export const SETTLEMENT_REGION_SIZE = CHUNK_SIZE * 4;
+
 export const RESOURCE_INTERACTION_RADIUS = 54;
 export const RESOURCE_RESPAWN_MS = 3 * 60 * 1000;
+export const RESOURCE_DISPLAY_WIDTHS: Readonly<Record<GeneratedResourceKind, readonly number[]>> = {
+  tree: [165, 145, 125],
+  stone: [34, 34, 42],
+};
 
 export function resourceCollisionRect(
   kind: GeneratedResourceKind,
   x: number,
   y: number,
 ): { x: number; y: number; width: number; height: number } {
-  const width = kind === "tree" ? 36 : 28;
-  const height = kind === "tree" ? 26 : 22;
+  const width = kind === "tree" ? 48 : 28;
+  const height = kind === "tree" ? 34 : 22;
   return { x: x - width / 2, y: y - height / 2, width, height };
 }
 
@@ -83,6 +117,229 @@ function hash2D(seed: number, x: number, y: number, salt: number): number {
 
 function randomAt(seed: number, x: number, y: number, salt: number): number {
   return hash2D(seed, x, y, salt) / 0xffffffff;
+}
+
+function houseSpriteBiome(biome: BiomeId): HouseSpriteBiome {
+  if (biome === "tundra") {
+    return "tundra";
+  }
+  if (biome === "desert" || biome === "badlands" || biome === "wasteland") {
+    return "badlands";
+  }
+  return "grassland";
+}
+
+function settlementKind(roll: number): SettlementKind {
+  if (roll < 0.1) {
+    return "town";
+  }
+  if (roll < 0.36) {
+    return "village";
+  }
+  if (roll < 0.64) {
+    return "hamlet";
+  }
+  if (roll < 0.86) {
+    return "farmstead";
+  }
+  return "isolated";
+}
+
+function settlementLayout(kind: SettlementKind): readonly WorldOffset[] {
+  if (kind === "town") {
+    return Array.from({ length: 16 }, (_, index) => ({
+      x: (index % 4 - 1.5) * 270,
+      y: (Math.floor(index / 4) - 1.5) * 280,
+    }));
+  }
+  if (kind === "village") {
+    return Array.from({ length: 9 }, (_, index) => ({
+      x: (index % 3 - 1) * 290,
+      y: (Math.floor(index / 3) - 1) * 300,
+    }));
+  }
+  if (kind === "hamlet") {
+    return [
+      { x: 0, y: 0 },
+      { x: -270, y: -45 },
+      { x: 275, y: 35 },
+      { x: -55, y: -280 },
+      { x: 45, y: 285 },
+    ];
+  }
+  if (kind === "farmstead") {
+    return [
+      { x: 0, y: 0 },
+      { x: 285, y: 110 },
+      { x: -270, y: 125 },
+    ];
+  }
+  return [{ x: 0, y: 0 }];
+}
+
+interface WorldOffset {
+  x: number;
+  y: number;
+}
+
+const SETTLEMENT_PREFIXES = [
+  "Ash",
+  "Briar",
+  "Crow",
+  "Dun",
+  "Elder",
+  "Fallow",
+  "Grey",
+  "High",
+  "Iron",
+  "Oak",
+  "Raven",
+  "Stone",
+] as const;
+
+const SETTLEMENT_SUFFIXES = [
+  "bridge",
+  "brook",
+  "field",
+  "ford",
+  "haven",
+  "hollow",
+  "mere",
+  "stead",
+  "vale",
+  "wick",
+  "wood",
+  "worth",
+] as const;
+
+function settlementName(numericSeed: number, regionX: number, regionY: number): string {
+  const prefix = SETTLEMENT_PREFIXES[
+    hash2D(numericSeed, regionX, regionY, 901) % SETTLEMENT_PREFIXES.length
+  ];
+  const suffix = SETTLEMENT_SUFFIXES[
+    hash2D(numericSeed, regionX, regionY, 907) % SETTLEMENT_SUFFIXES.length
+  ];
+  return `${prefix}${suffix}`;
+}
+
+function dwellingName(
+  settlement: string,
+  kind: SettlementKind,
+  index: number,
+): string {
+  if (kind === "farmstead") {
+    return index === 0
+      ? `${settlement} Farmhouse`
+      : `${settlement} Farm Cottage ${index}`;
+  }
+  if (kind === "isolated") {
+    return `${settlement} Cottage`;
+  }
+  return `${settlement} ${kind === "town" ? "Dwelling" : "Cottage"} ${index + 1}`;
+}
+
+export function generateSettlementRegionBuildings(
+  seed: string,
+  regionX: number,
+  regionY: number,
+): GeneratedBuildingPlacement[] {
+  const numericSeed = hashString(seed);
+  const kind = settlementKind(randomAt(numericSeed, regionX, regionY, 919));
+  const name = settlementName(numericSeed, regionX, regionY);
+  const settlementId = `settlement:${regionX}:${regionY}`;
+  const centerX = regionX * SETTLEMENT_REGION_SIZE
+    + 800
+    + randomAt(numericSeed, regionX, regionY, 929) * (SETTLEMENT_REGION_SIZE - 1600);
+  const centerY = regionY * SETTLEMENT_REGION_SIZE
+    + 800
+    + randomAt(numericSeed, regionX, regionY, 937) * (SETTLEMENT_REGION_SIZE - 1600);
+
+  return settlementLayout(kind).flatMap((offset, index) => {
+    const x = centerX + offset.x + (randomAt(numericSeed, regionX, regionY, 947 + index) - 0.5) * 34;
+    const y = centerY + offset.y + (randomAt(numericSeed, regionX, regionY, 997 + index) - 0.5) * 28;
+    if (Math.hypot(x, y) < STARTING_TOWN_RADIUS + 350) {
+      return [];
+    }
+    const tile = sampleTile(seed, Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));
+    const spriteBiome = houseSpriteBiome(tile.biome);
+    const id = `dwelling:${regionX}:${regionY}:${index}`;
+    return [{
+      id,
+      name: dwellingName(name, kind, index),
+      settlementId,
+      settlementName: name,
+      settlementKind: kind,
+      spriteBiome,
+      spriteVariant: hash2D(numericSeed, regionX, regionY, 1103 + index)
+        % HOUSE_VARIANT_COUNTS[spriteBiome],
+      x,
+      y,
+      displayWidth: 195 + hash2D(numericSeed, regionX, regionY, 1201 + index) % 41,
+      interiorSpaceId: `interior:${id}`,
+    }];
+  });
+}
+
+export function generateChunkBuildings(
+  seed: string,
+  chunkX: number,
+  chunkY: number,
+): GeneratedBuildingPlacement[] {
+  const startX = chunkX * CHUNK_SIZE;
+  const startY = chunkY * CHUNK_SIZE;
+  const endX = startX + CHUNK_SIZE;
+  const endY = startY + CHUNK_SIZE;
+  const minimumRegionX = Math.floor((startX - 600) / SETTLEMENT_REGION_SIZE);
+  const maximumRegionX = Math.floor((endX + 600) / SETTLEMENT_REGION_SIZE);
+  const minimumRegionY = Math.floor((startY - 600) / SETTLEMENT_REGION_SIZE);
+  const maximumRegionY = Math.floor((endY + 600) / SETTLEMENT_REGION_SIZE);
+  const buildings: GeneratedBuildingPlacement[] = [];
+
+  for (let regionY = minimumRegionY; regionY <= maximumRegionY; regionY += 1) {
+    for (let regionX = minimumRegionX; regionX <= maximumRegionX; regionX += 1) {
+      generateSettlementRegionBuildings(seed, regionX, regionY).forEach((building) => {
+        if (
+          building.x >= startX
+          && building.x < endX
+          && building.y >= startY
+          && building.y < endY
+        ) {
+          buildings.push(building);
+        }
+      });
+    }
+  }
+
+  return buildings;
+}
+
+export function resolveGeneratedBuilding(
+  building: GeneratedBuildingPlacement,
+): ResolvedBuildingDefinition {
+  return resolveBuildingInstance({
+    id: building.id,
+    name: building.name,
+    prefabId: SUMMER_HOUSE_PREFAB_ID,
+    exteriorPosition: { x: building.x, y: building.y },
+    interiorSpaceId: building.interiorSpaceId,
+    spriteId: `${building.spriteBiome}:${building.spriteVariant}`,
+    displayWidth: building.displayWidth,
+  });
+}
+
+export function generatedBuildingFromInteriorSpace(
+  seed: string,
+  spaceId: string,
+): ResolvedBuildingDefinition | undefined {
+  const match = /^interior:dwelling:(-?\d+):(-?\d+):(\d+)$/.exec(spaceId);
+  if (!match) {
+    return undefined;
+  }
+  const regionX = Number(match[1]);
+  const regionY = Number(match[2]);
+  return generateSettlementRegionBuildings(seed, regionX, regionY)
+    .filter((building) => building.interiorSpaceId === spaceId)
+    .map(resolveGeneratedBuilding)[0];
 }
 
 function smoothstep(value: number): number {
@@ -234,6 +491,9 @@ export function generateChunkProps(
       const centerY = chunkY * CHUNK_SIZE + localCellY * cellSize + cellSize / 2;
       const x = centerX + (randomAt(numericSeed, globalCellX, globalCellY, 701) - 0.5) * 76;
       const y = centerY + (randomAt(numericSeed, globalCellX, globalCellY, 709) - 0.5) * 76;
+      if (Math.hypot(x, y) < STARTING_TOWN_RADIUS + 80) {
+        continue;
+      }
       const tile = sampleTile(seed, Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));
       const grassChance = {
         grassland: 0.48,
@@ -291,7 +551,7 @@ export function generateChunkResources(
       const centerY = chunkY * CHUNK_SIZE + localCellY * cellSize + cellSize / 2;
       const x = centerX + (randomAt(numericSeed, globalCellX, globalCellY, 811) - 0.5) * 132;
       const y = centerY + (randomAt(numericSeed, globalCellX, globalCellY, 821) - 0.5) * 132;
-      if (Math.hypot(x, y) < 230) {
+      if (Math.hypot(x, y) < STARTING_TOWN_RADIUS + 80) {
         continue;
       }
       const tile = sampleTile(seed, Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));

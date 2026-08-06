@@ -26,6 +26,7 @@ interface NetworkPlayerState extends Omit<PlayerSnapshot, "inventory"> {
   parts: number;
   food: number;
   medicine: number;
+  water: number;
   wood: number;
   stone: number;
   inventorySlots: Array<InventorySlotSnapshot>;
@@ -169,6 +170,7 @@ export class WorldConnection {
           parts: player.parts,
           food: player.food,
           medicine: player.medicine,
+          water: player.water,
           wood: player.wood,
           stone: player.stone,
           capacity: player.inventorySlots.length,

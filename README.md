@@ -13,7 +13,7 @@ The root `index.html`, `game.js`, `styles.css`, `sprites/`, and `music/` files a
 - Left click: shoot
 - `R`: reload
 - `E`: interact, loot, or harvest
-- `F`: toggle flashlight
+- `F`: toggle the hand lantern
 - `Shift`: sprint
 - `Ctrl`: crouch
 - `Space`: jump
@@ -50,11 +50,11 @@ Each browser profile receives one persistent survivor identity. Use a second bro
 
 - `W`, `A`, `S`, `D`: move
 - Mouse: aim
-- Left click: fire the development pistol
+- Left click: fire the development hunting bow
 - `E`: enter, leave, search, or cancel a search
 - `I`: open or close the 4x4 inventory
 - `Shift`: sprint while stamina is available
-- `F`: toggle the flashlight
+- `F`: toggle the hand lantern
 - `B`: enter or leave build mode
 - `R`: rotate the selected structure
 - Left click in build mode: place the structure
@@ -62,7 +62,7 @@ Each browser profile receives one persistent survivor identity. Use a second bro
 
 V2 combat is server-authoritative. Shared zombies track health, aggro, player damage contributions, respawn timers, and highest-contribution loot ownership. The starting camp is protected from zombie targeting.
 
-Buildings use reusable prefab definitions with instance-specific exterior positions, interior spaces, collision, and searchable container IDs. House 48 and House 73 currently share the first summer-house prefab while retaining independent multiplayer presence, loot state, and persistence.
+Buildings use reusable prefab definitions with instance-specific exterior positions, interior spaces, collision, and searchable container IDs. BiomeGen deterministically places named medieval towns, villages, hamlets, farmsteads, and isolated cottages across the endless world. Generated dwellings retain independent multiplayer presence, loot state, and persistence.
 
 Inventory, harvesting, and building mutations are server-authoritative. Stacks can be moved, split, dropped into the shared world, and collected once by any connected player. Trees and stones are deterministic shared resources: harvesting locks the node, awards inventory materials, and starts a three-minute respawn. Wooden walls use inventory resources, shared collision, and persistent world state. Temporary art is centralized under `sprites/Sprites-Loaded`; replacing an image at the same path updates V2 without changing gameplay code.
 
@@ -70,7 +70,7 @@ Append `?world=world-name` to the client URL to create or join an isolated devel
 
 ### Development Persistence
 
-The V2 server checkpoints survivor positions, stamina, flashlight state, slot inventories, depleted resources, shared world pickups, placed structures, container state, and zombies every five seconds and when players disconnect. Local save data is written to `apps/server/data/worlds.json` and is excluded from Git.
+The V2 server checkpoints survivor positions, stamina, lantern state, slot inventories, depleted resources, shared world pickups, placed structures, container state, and zombies every five seconds and when players disconnect. Local save data is written to `apps/server/data/worlds.json` and is excluded from Git.
 
 Set `LAST_SURVIVOR_DATA_FILE` to use a different data path. Delete the local file while the server is stopped to reset the development world. Storage is accessed through a repository interface so the file adapter can be replaced by PostgreSQL for production deployment.
 

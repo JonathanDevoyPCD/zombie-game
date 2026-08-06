@@ -1,5 +1,5 @@
 const loadedSprites = import.meta.glob<string>(
-  "../../../../sprites/Sprites-Loaded/**/*.png",
+  "../../../../sprites/Sprites-Loaded/**/*.{png,svg}",
   { eager: true, query: "?url", import: "default" },
 );
 
@@ -14,9 +14,47 @@ function loadedSpriteUrl(relativePath: string): string {
 
 export const SPRITE_ASSETS = {
   structures: {
-    regularHouse: loadedSpriteUrl("Structures/regular-house.png"),
     woodWallHorizontal: loadedSpriteUrl("Structures/wood-wall-horizontal.png"),
     woodWallVertical: loadedSpriteUrl("Structures/wood-wall-vertical.png"),
+  },
+  buildings: {
+    houses: {
+      grassland: Array.from(
+        { length: 32 },
+        (_, index) => loadedSpriteUrl(
+          `Buildings/Houses/Grassland/house-grassland-${String(index + 1).padStart(2, "0")}.png`,
+        ),
+      ),
+      tundra: Array.from(
+        { length: 32 },
+        (_, index) => loadedSpriteUrl(
+          `Buildings/Houses/Tundra/house-tundra-${String(index + 1).padStart(2, "0")}.png`,
+        ),
+      ),
+      badlands: Array.from(
+        { length: 31 },
+        (_, index) => loadedSpriteUrl(
+          `Buildings/Houses/Badlands/house-badlands-${String(index + 1).padStart(2, "0")}.png`,
+        ),
+      ),
+    },
+  },
+  town: {
+    barrel: loadedSpriteUrl("Town/barrel.png"),
+    bench: loadedSpriteUrl("Town/bench.svg"),
+    "fence-horizontal": loadedSpriteUrl("Town/fence-horizontal.png"),
+    "fence-vertical": loadedSpriteUrl("Town/fence-vertical.png"),
+    firepit: loadedSpriteUrl("Town/firepit.png"),
+    "hay-bale": loadedSpriteUrl("Town/hay-bale.svg"),
+    "lamp-post": loadedSpriteUrl("Town/lamp-post.svg"),
+    lantern: loadedSpriteUrl("Town/lantern.svg"),
+    "market-stall": loadedSpriteUrl("Town/market-stall.svg"),
+    signpost: loadedSpriteUrl("Town/signpost.svg"),
+    "stone-wall-horizontal": loadedSpriteUrl("Town/stone-wall-horizontal.svg"),
+    "stone-wall-vertical": loadedSpriteUrl("Town/stone-wall-vertical.svg"),
+    trough: loadedSpriteUrl("Town/trough.svg"),
+    wagon: loadedSpriteUrl("Town/wagon.png"),
+    well: loadedSpriteUrl("Town/well.png"),
   },
   containers: {
     chest: loadedSpriteUrl("Containers/chest.png"),
@@ -26,6 +64,7 @@ export const SPRITE_ASSETS = {
     parts: loadedSpriteUrl("Items/parts.png"),
     food: loadedSpriteUrl("Items/food.png"),
     medicine: loadedSpriteUrl("Items/medicine.png"),
+    water: loadedSpriteUrl("Items/water.svg"),
     wood: loadedSpriteUrl("Items/wood.png"),
     stone: loadedSpriteUrl("Items/stone.png"),
   },

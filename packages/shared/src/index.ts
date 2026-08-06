@@ -112,6 +112,7 @@ export interface InventorySnapshot {
   parts: number;
   food: number;
   medicine: number;
+  water: number;
   wood: number;
   stone: number;
   capacity: number;

@@ -38,6 +38,7 @@ export function inventoryTotals(
     parts: 0,
     food: 0,
     medicine: 0,
+    water: 0,
     wood: 0,
     stone: 0,
   };

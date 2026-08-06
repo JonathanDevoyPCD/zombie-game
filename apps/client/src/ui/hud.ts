@@ -20,7 +20,7 @@ function setText(id: string, value: string): void {
 }
 
 export function updateConnectionStatus(connected: boolean): void {
-  setText("connection-status", connected ? "World server online" : "World server unavailable");
+  setText("connection-status", connected ? "Realm connected" : "Realm unavailable");
   document.getElementById("connection-dot")?.classList.toggle("is-online", connected);
 }
 
@@ -44,13 +44,14 @@ export function updateInventory(inventory: InventorySnapshot): void {
   setText("inventory-parts", String(inventory.parts));
   setText("inventory-food", String(inventory.food));
   setText("inventory-medicine", String(inventory.medicine));
+  setText("inventory-water", String(inventory.water));
   setText("inventory-wood", String(inventory.wood));
   setText("inventory-stone", String(inventory.stone));
 }
 
 export function updateSignalReadout(areaName: string, distanceFromCamp: number): void {
   setText("signal-time", "Time: Day");
-  setText("signal-district", `District: ${areaName}`);
+  setText("signal-district", `Region: ${areaName}`);
   setText("signal-distance", `Camp: ${Math.max(0, Math.round(distanceFromCamp))}m`);
 }
 

@@ -6,6 +6,9 @@ coverage/
 !.env.example
 .playwright-cli/
 output/playwright/
+output/
+.codex-dev.log
 test-results/
 apps/server/data/*.json
 apps/server/data/*.tmp
+sprites/Houses/

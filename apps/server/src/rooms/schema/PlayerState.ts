@@ -20,6 +20,7 @@ export class PlayerState extends Schema {
   parts = 0;
   food = 0;
   medicine = 0;
+  water = 0;
   wood = 0;
   stone = 0;
   inventorySlots = new ArraySchema<InventorySlotState>();
@@ -45,6 +46,7 @@ defineTypes(PlayerState, {
   parts: "number",
   food: "number",
   medicine: "number",
+  water: "number",
   wood: "number",
   stone: "number",
   inventorySlots: [InventorySlotState],

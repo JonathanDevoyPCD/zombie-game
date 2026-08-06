@@ -24,21 +24,23 @@ import {
   PLAYER_COLLISION_RADIUS,
   buildableCollider,
   buildableCollidersConflict,
-  buildingByInteriorSpace,
-  buildingContainerById,
   isBuildableId,
   isBuildOrientation,
   isItemId,
+  movementEnvironmentForBuilding,
   movementEnvironmentForSpace,
   snapBuildCoordinate,
   type ItemId,
   type LootItemId,
+  type ResolvedBuildingDefinition,
   type SearchableContainerDefinition,
   PISTOL_DAMAGE,
   PISTOL_FIRE_COOLDOWN_MS,
   PISTOL_RANGE,
   PLAYER_MAX_HEALTH,
   PLAYER_RESPAWN_INVULNERABILITY_MS,
+  STARTING_TOWN_PROP_COLLIDERS,
+  STARTING_TOWN_PROPS,
   STARTING_SAFE_ZONE_RADIUS,
   ZOMBIE_AGGRO_RADIUS,
   ZOMBIE_ATTACK_COOLDOWN_MS,
@@ -66,7 +68,10 @@ import {
 import {
   RESOURCE_INTERACTION_RADIUS,
   RESOURCE_RESPAWN_MS,
+  generateChunkBuildings,
   generateChunkResources,
+  generatedBuildingFromInteriorSpace,
+  resolveGeneratedBuilding,
   resourceCollisionRect,
   worldToChunk,
 } from "@last-survivor/worldgen";
@@ -266,7 +271,15 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   private readonly damageLedgers = new Map<string, Map<string, { damage: number; name: string }>>();
   private readonly processedOperations = new Map<string, Set<string>>();
   private readonly persistedSurvivors = new Map<string, PersistedSurvivor>();
+  private readonly persistedContainers = new Map<
+    string,
+    PersistedWorld["containers"][string]
+  >();
   private readonly persistedResources = new Map<string, PersistedWorld["resources"][string]>();
+  private readonly worldBuildings = new Map(
+    BUILDINGS.map((building) => [building.id, building] as const),
+  );
+  private readonly loadedBuildingChunks = new Set<string>();
   private readonly loadedResourceChunks = new Set<string>();
   private readonly starterKitsGranted = new Set<string>();
   private persistenceDirty = false;
@@ -290,20 +303,12 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       Object.values(persistedWorld.resources ?? {}).forEach((resource) => {
         this.persistedResources.set(resource.id, resource);
       });
+      Object.values(persistedWorld.containers ?? {}).forEach((container) => {
+        this.persistedContainers.set(container.id, container);
+      });
     }
 
-    ALL_BUILDING_CONTAINERS.forEach((definition) => {
-      const container = new ContainerState();
-      container.id = definition.id;
-      container.spaceId = definition.spaceId;
-      container.searchDurationMs = definition.searchDurationMs;
-      const persistedContainer = persistedWorld?.containers[definition.id];
-      if (persistedContainer) {
-        container.opened = persistedContainer.opened;
-        container.searchedBy = persistedContainer.searchedBy;
-      }
-      this.state.containers.set(container.id, container);
-    });
+    ALL_BUILDING_CONTAINERS.forEach((definition) => this.ensureContainerState(definition));
 
     ZOMBIE_SPAWNS.forEach((spawn) => {
       const zombie = new ZombieState();
@@ -316,8 +321,12 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       zombie.maxHealth = spawn.maxHealth;
       const persistedZombie = persistedWorld?.zombies[spawn.id];
       if (persistedZombie) {
-        zombie.x = finiteNumber(persistedZombie.x, zombie.x);
-        zombie.y = finiteNumber(persistedZombie.y, zombie.y);
+        const persistedX = finiteNumber(persistedZombie.x, zombie.x);
+        const persistedY = finiteNumber(persistedZombie.y, zombie.y);
+        if (Math.hypot(persistedX, persistedY) > STARTING_SAFE_ZONE_RADIUS) {
+          zombie.x = persistedX;
+          zombie.y = persistedY;
+        }
         zombie.health = Math.max(0, Math.min(zombie.maxHealth, inventoryCount(persistedZombie.health)));
         zombie.alive = persistedZombie.alive && zombie.health > 0;
         zombie.respawnAt = finiteNumber(persistedZombie.respawnAt, 0);
@@ -361,6 +370,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       this.state.structures.set(structure.id, structure);
     });
 
+    this.ensureBuildingsAround(0, 0);
     this.ensureResourcesAround(0, 0);
 
     this.onMessage(ClientMessage.INPUT, (client, payload: unknown) => {
@@ -442,6 +452,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     }
 
     this.state.players.set(client.sessionId, player);
+    this.ensureBuildingsAround(player.x, player.y);
     this.ensureResourcesAround(player.x, player.y);
     this.inputQueues.set(client.sessionId, []);
     this.simulationBudgets.set(client.sessionId, 0);
@@ -480,6 +491,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
 
     this.state.players.forEach((player, sessionId) => {
       if (player.spaceId === OVERWORLD_SPACE_ID) {
+        this.ensureBuildingsAround(player.x, player.y);
         this.ensureResourcesAround(player.x, player.y);
       }
       const queue = this.inputQueues.get(sessionId);
@@ -595,16 +607,89 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     player.parts = totals.parts;
     player.food = totals.food;
     player.medicine = totals.medicine;
+    player.water = totals.water;
     player.wood = totals.wood;
     player.stone = totals.stone;
   }
 
-  private movementEnvironment(spaceId: string) {
-    const base = movementEnvironmentForSpace(spaceId);
-    if (spaceId !== OVERWORLD_SPACE_ID) {
-      return base;
+  private allBuildings(): ResolvedBuildingDefinition[] {
+    return [...this.worldBuildings.values()];
+  }
+
+  private buildingForSpace(spaceId: string): ResolvedBuildingDefinition | undefined {
+    return this.allBuildings().find((building) => building.interior.spaceId === spaceId);
+  }
+
+  private containerDefinition(containerId: string): SearchableContainerDefinition | undefined {
+    return this.allBuildings()
+      .flatMap((building) => building.interior.containers)
+      .find((container) => container.id === containerId);
+  }
+
+  private ensureContainerState(definition: SearchableContainerDefinition): void {
+    if (this.state.containers.has(definition.id)) {
+      return;
     }
-    const colliders = [...base.colliders];
+    const container = new ContainerState();
+    container.id = definition.id;
+    container.spaceId = definition.spaceId;
+    container.searchDurationMs = definition.searchDurationMs;
+    const persisted = this.persistedContainers.get(definition.id);
+    if (persisted) {
+      container.opened = persisted.opened;
+      container.searchedBy = persisted.searchedBy;
+    }
+    this.state.containers.set(container.id, container);
+  }
+
+  private ensureBuildingContainers(building: ResolvedBuildingDefinition): void {
+    building.interior.containers.forEach((container) => this.ensureContainerState(container));
+  }
+
+  private registerGeneratedBuilding(building: ResolvedBuildingDefinition): void {
+    this.worldBuildings.set(building.id, building);
+  }
+
+  private ensureBuildingsAround(x: number, y: number): void {
+    const centerChunkX = worldToChunk(x);
+    const centerChunkY = worldToChunk(y);
+    for (let chunkY = centerChunkY - 1; chunkY <= centerChunkY + 1; chunkY += 1) {
+      for (let chunkX = centerChunkX - 1; chunkX <= centerChunkX + 1; chunkX += 1) {
+        const chunkKey = `${chunkX}:${chunkY}`;
+        if (this.loadedBuildingChunks.has(chunkKey)) {
+          continue;
+        }
+        this.loadedBuildingChunks.add(chunkKey);
+        generateChunkBuildings(this.state.seed, chunkX, chunkY).forEach((placement) => {
+          this.registerGeneratedBuilding(resolveGeneratedBuilding(placement));
+        });
+      }
+    }
+  }
+
+  private ensureBuildingForSpace(spaceId: string): ResolvedBuildingDefinition | undefined {
+    const known = this.buildingForSpace(spaceId);
+    if (known) {
+      return known;
+    }
+    const generated = generatedBuildingFromInteriorSpace(this.state.seed, spaceId);
+    if (generated) {
+      this.registerGeneratedBuilding(generated);
+    }
+    return generated;
+  }
+
+  private movementEnvironment(spaceId: string) {
+    if (spaceId !== OVERWORLD_SPACE_ID) {
+      const building = this.ensureBuildingForSpace(spaceId);
+      return building
+        ? movementEnvironmentForBuilding(building)
+        : movementEnvironmentForSpace(spaceId);
+    }
+    const colliders = [
+      ...this.allBuildings().map((building) => building.exterior.collider),
+      ...STARTING_TOWN_PROP_COLLIDERS,
+    ];
     this.state.structures.forEach((structure) => {
       if (!isBuildableId(structure.buildableId) || !isBuildOrientation(structure.orientation)) {
         return;
@@ -621,7 +706,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
         colliders.push(resourceCollisionRect(resource.kind, resource.x, resource.y));
       }
     });
-    return { ...base, colliders };
+    return { colliders };
   }
 
   private acceptOperation(sessionId: string, operationId: string): boolean {
@@ -725,9 +810,10 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     }
 
     const collider = buildableCollider(definition, x, y, input.orientation);
-    const staticEnvironment = movementEnvironmentForSpace(OVERWORLD_SPACE_ID);
-    const overlapsStaticWorld = staticEnvironment.colliders.some((candidate) => (
-      rectanglesOverlap(collider, candidate, 8)
+    const overlapsStaticWorld = this.allBuildings().some((building) => (
+      rectanglesOverlap(collider, building.exterior.collider, 8)
+    )) || STARTING_TOWN_PROP_COLLIDERS.some((propCollider) => (
+      rectanglesOverlap(collider, propCollider, 4)
     ));
     let overlapsStructure = false;
     this.state.structures.forEach((structure) => {
@@ -1138,7 +1224,32 @@ export class WorldRoom extends Room<{ state: WorldState }> {
         this.startHarvest(client.sessionId, resource);
         return;
       }
-      const building = BUILDINGS
+      const townProp = STARTING_TOWN_PROPS
+        .filter((candidate) => candidate.interaction
+          && distanceBetween(player, candidate.position) <= candidate.interaction.radius)
+        .sort(
+          (left, right) => distanceBetween(player, left.position)
+            - distanceBetween(player, right.position),
+        )[0];
+      if (townProp?.interaction?.kind === "draw-water") {
+        const slots = this.playerInventory(player);
+        const amount = addInventoryItem(slots, "water", townProp.interaction.amount);
+        if (amount <= 0) {
+          this.sendInventoryEvent(client, {
+            kind: "error",
+            message: "Your field pack is full.",
+          });
+          return;
+        }
+        this.commitPlayerInventory(player, slots);
+        this.sendInventoryEvent(client, {
+          kind: "success",
+          message: `Drew ${amount} fresh water from ${townProp.name.toLowerCase()}.`,
+        });
+        this.markPersistenceDirty();
+        return;
+      }
+      const building = this.allBuildings()
         .filter(
           (candidate) => distanceBetween(player, candidate.exterior.entrance)
             <= candidate.exterior.interactionRadius,
@@ -1148,6 +1259,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
             - distanceBetween(player, right.exterior.entrance),
         )[0];
       if (building) {
+        this.ensureBuildingContainers(building);
         this.movePlayerToSpace(
           client.sessionId,
           building.interior.spaceId,
@@ -1157,7 +1269,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       return;
     }
 
-    const building = buildingByInteriorSpace(player.spaceId);
+    const building = this.ensureBuildingForSpace(player.spaceId);
     if (!building) {
       return;
     }
@@ -1192,7 +1304,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
         }
         this.loadedResourceChunks.add(chunkKey);
         generateChunkResources(this.state.seed, chunkX, chunkY).forEach((definition) => {
-          const overlapsBuilding = BUILDINGS.some((building) => {
+          const overlapsBuilding = this.allBuildings().some((building) => {
             const collider = building.exterior.collider;
             return definition.x >= collider.x - 48
               && definition.x <= collider.x + collider.width + 48
@@ -1348,7 +1460,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   }
 
   private nearestSearchableContainer(player: PlayerState): SearchableContainerDefinition | undefined {
-    const building = buildingByInteriorSpace(player.spaceId);
+    const building = this.ensureBuildingForSpace(player.spaceId);
     return building?.interior.containers
       .filter((definition) => {
         const state = this.state.containers.get(definition.id);
@@ -1386,7 +1498,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       }
 
       const player = this.state.players.get(container.searchingBy);
-      const definition = buildingContainerById(container.id);
+      const definition = this.containerDefinition(container.id);
       if (
         !player
         || !definition
@@ -1513,9 +1625,11 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     player.x = finiteNumber(persisted.x, 0);
     player.y = finiteNumber(persisted.y, 0);
     player.facing = finiteNumber(persisted.facing, 0);
-    player.spaceId = buildingByInteriorSpace(persisted.spaceId)
-      ? persisted.spaceId
-      : OVERWORLD_SPACE_ID;
+    const restoredBuilding = this.ensureBuildingForSpace(persisted.spaceId);
+    player.spaceId = restoredBuilding ? persisted.spaceId : OVERWORLD_SPACE_ID;
+    if (restoredBuilding) {
+      this.ensureBuildingContainers(restoredBuilding);
+    }
     player.maxHealth = PLAYER_MAX_HEALTH;
     player.health = Math.max(1, Math.min(player.maxHealth, inventoryCount(persisted.health)));
     player.maxStamina = PLAYER_MAX_STAMINA;
@@ -1556,13 +1670,17 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   private buildPersistentWorld(): PersistedWorld {
     this.state.players.forEach((player) => this.captureSurvivor(player));
     const survivors = Object.fromEntries(this.persistedSurvivors.entries());
-    const containers: PersistedWorld["containers"] = {};
+    const containers: PersistedWorld["containers"] = Object.fromEntries(
+      this.persistedContainers.entries(),
+    );
     this.state.containers.forEach((container) => {
-      containers[container.id] = {
+      const persisted = {
         id: container.id,
         opened: container.opened,
         searchedBy: container.searchedBy,
       };
+      containers[container.id] = persisted;
+      this.persistedContainers.set(container.id, persisted);
     });
     const zombies: PersistedWorld["zombies"] = {};
     this.state.zombies.forEach((zombie) => {

@@ -10,7 +10,7 @@ export interface ZombieSpawnDefinition {
 
 export const PLAYER_MAX_HEALTH = 100;
 export const PLAYER_RESPAWN_INVULNERABILITY_MS = 3000;
-export const STARTING_SAFE_ZONE_RADIUS = 115;
+export const STARTING_SAFE_ZONE_RADIUS = 1_450;
 export const PISTOL_DAMAGE = 25;
 export const PISTOL_RANGE = 420;
 export const PISTOL_FIRE_COOLDOWN_MS = 260;
@@ -29,21 +29,21 @@ export const ZOMBIE_SPAWNS: readonly ZombieSpawnDefinition[] = [
   {
     id: "zombie:outskirts:01",
     name: "Drifter",
-    position: { x: 490, y: 90 },
+    position: { x: 1_750, y: 90 },
     spaceId: OVERWORLD_SPACE_ID,
     maxHealth: 100,
   },
   {
     id: "zombie:outskirts:02",
     name: "Shambler",
-    position: { x: 545, y: -95 },
+    position: { x: 400, y: -1_700 },
     spaceId: OVERWORLD_SPACE_ID,
     maxHealth: 100,
   },
   {
     id: "zombie:outskirts:03",
     name: "Wanderer",
-    position: { x: 585, y: 235 },
+    position: { x: -1_650, y: 900 },
     spaceId: OVERWORLD_SPACE_ID,
     maxHealth: 100,
   },

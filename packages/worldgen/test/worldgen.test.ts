@@ -1,11 +1,16 @@
-import { BIOME_IDS } from "@last-survivor/content";
+import { BIOME_IDS, STARTING_TOWN_RADIUS } from "@last-survivor/content";
 import { describe, expect, it } from "vitest";
 import {
   CHUNK_SIZE,
   CHUNK_TILES,
+  HOUSE_VARIANT_COUNTS,
   generateChunk,
+  generateChunkBuildings,
   generateChunkProps,
   generateChunkResources,
+  generateSettlementRegionBuildings,
+  generatedBuildingFromInteriorSpace,
+  resolveGeneratedBuilding,
   sampleTile,
   worldToChunk,
 } from "../src/index";
@@ -53,10 +58,61 @@ describe("BiomeGen", () => {
     });
   });
 
+  it("keeps ambient props out of Hearthwick", () => {
+    const props = [-1, 0, 1].flatMap((chunkX) => (
+      [-1, 0, 1].flatMap((chunkY) => generateChunkProps("town-clearance", chunkX, chunkY))
+    ));
+    expect(props.every((prop) => Math.hypot(prop.x, prop.y) >= STARTING_TOWN_RADIUS + 80))
+      .toBe(true);
+  });
+
   it("generates deterministic harvestable resources outside the starting camp", () => {
     const first = generateChunkResources("resource-seed", 1, 0);
     expect(generateChunkResources("resource-seed", 1, 0)).toEqual(first);
-    expect(first.every((resource) => Math.hypot(resource.x, resource.y) >= 230)).toBe(true);
+    expect(first.every((resource) => (
+      Math.hypot(resource.x, resource.y) >= STARTING_TOWN_RADIUS + 80
+    ))).toBe(true);
     expect(first.every((resource) => resource.variant >= 0 && resource.variant < 3)).toBe(true);
+  });
+
+  it("generates stable medieval settlements with biome-safe house variants", () => {
+    const first = generateSettlementRegionBuildings("settlement-seed", 2, -1);
+    expect(generateSettlementRegionBuildings("settlement-seed", 2, -1)).toEqual(first);
+    expect(first.length).toBeGreaterThan(0);
+    expect(new Set(first.map((building) => building.id)).size).toBe(first.length);
+    first.forEach((building) => {
+      expect(building.spriteVariant).toBeGreaterThanOrEqual(0);
+      expect(building.spriteVariant).toBeLessThan(HOUSE_VARIANT_COUNTS[building.spriteBiome]);
+      expect(building.name).not.toMatch(/radio|hospital|bunker/i);
+    });
+  });
+
+  it("keeps generated settlements outside the starting town", () => {
+    const buildings = [-1, 0, 1].flatMap((regionX) => (
+      [-1, 0, 1].flatMap((regionY) => (
+        generateSettlementRegionBuildings("town-clearance", regionX, regionY)
+      ))
+    ));
+    expect(buildings.every((building) => (
+      Math.hypot(building.x, building.y) >= STARTING_TOWN_RADIUS + 350
+    ))).toBe(true);
+  });
+
+  it("returns each generated dwelling only from its owning chunk", () => {
+    const buildings = generateChunkBuildings("settlement-seed", 5, -2);
+    buildings.forEach((building) => {
+      expect(building.x).toBeGreaterThanOrEqual(5 * CHUNK_SIZE);
+      expect(building.x).toBeLessThan(6 * CHUNK_SIZE);
+      expect(building.y).toBeGreaterThanOrEqual(-2 * CHUNK_SIZE);
+      expect(building.y).toBeLessThan(-1 * CHUNK_SIZE);
+    });
+  });
+
+  it("reconstructs generated interiors from their stable multiplayer space ID", () => {
+    const placement = generateSettlementRegionBuildings("interior-seed", -1, 2)[0];
+    expect(placement).toBeDefined();
+    const resolved = resolveGeneratedBuilding(placement!);
+    expect(generatedBuildingFromInteriorSpace("interior-seed", resolved.interior.spaceId))
+      .toEqual(resolved);
   });
 });

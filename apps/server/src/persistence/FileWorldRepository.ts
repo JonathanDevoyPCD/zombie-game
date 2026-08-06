@@ -24,7 +24,7 @@ function legacyInventorySlots(value: unknown): Array<{ index: number; itemId: st
     return inventory.slots as Array<{ index: number; itemId: string; quantity: number }>;
   }
 
-  return ["scrap", "parts", "food", "medicine", "wood", "stone"]
+  return ["scrap", "parts", "food", "medicine", "water", "wood", "stone"]
     .map((itemId, index) => ({
       index,
       itemId,

@@ -29,3 +29,4 @@ export * from "./world";
 export * from "./combat";
 export * from "./items";
 export * from "./buildables";
+export * from "./town";
